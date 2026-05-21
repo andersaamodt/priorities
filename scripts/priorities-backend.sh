@@ -194,7 +194,7 @@ shift
 
 ATTR_BACKEND=spell
 case "${PRIORITIES_ATTR_BACKEND-}" in
-  xattr|getfattr|attr|spell)
+  xattr|getfattr|attr|spell|sidecar)
     ATTR_BACKEND=${PRIORITIES_ATTR_BACKEND}
     ;;
   *)
@@ -207,6 +207,138 @@ case "${PRIORITIES_ATTR_BACKEND-}" in
     fi
     ;;
 esac
+
+sidecar_path() {
+  printf '%s.xattr.json\n' "$1"
+}
+
+is_sidecar_file() {
+  case "$(basename "${1-}")" in
+    *.xattr.json) return 0 ;;
+  esac
+  return 1
+}
+
+json_escape() {
+  printf '%s' "${1-}" | sed 's/\\/\\\\/g; s/"/\\"/g'
+}
+
+sidecar_attr_value() {
+  file=$1
+  key=$2
+  sidecar=$(sidecar_path "$file")
+  [ -f "$sidecar" ] || return 1
+  awk -v k="$key" '
+    {
+      pat = "\"" k "\"[[:space:]]*:[[:space:]]*\""
+      pos = match($0, pat)
+      if (pos == 0) {
+        next
+      }
+      rest = substr($0, pos + RLENGTH)
+      out = ""
+      esc = 0
+      for (i = 1; i <= length(rest); i += 1) {
+        ch = substr(rest, i, 1)
+        if (esc == 1) {
+          out = out ch
+          esc = 0
+        } else if (ch == "\\") {
+          esc = 1
+        } else if (ch == "\"") {
+          print out
+          exit
+        } else {
+          out = out ch
+        }
+      }
+    }
+  ' "$sidecar"
+}
+
+sidecar_write_attrs() {
+  file=$1
+  echelon=${2-}
+  priority=${3-}
+  checked=${4-}
+  upvotes=${5-}
+  sidecar=$(sidecar_path "$file")
+  tmp=$(mktemp "${TMPDIR:-/tmp}/priorities-sidecar.XXXXXX")
+  doc_path=$(basename "$file")
+  first=1
+
+  {
+    printf '{"version":"1","docPath":"%s","xattrs":{' "$(json_escape "$doc_path")"
+    for pair in \
+      "echelon=$echelon" \
+      "priority=$priority" \
+      "checked=$checked" \
+      "upvotes=$upvotes"
+    do
+      key=${pair%%=*}
+      value=${pair#*=}
+      [ -n "$value" ] || continue
+      if [ "$first" -eq 0 ]; then
+        printf ','
+      fi
+      first=0
+      printf '"%s":"%s"' "$key" "$(json_escape "$value")"
+    done
+    printf '}}\n'
+  } > "$tmp"
+
+  mv "$tmp" "$sidecar"
+}
+
+sidecar_set_attr() {
+  file=$1
+  key=$2
+  value=$3
+  echelon=$(sidecar_attr_value "$file" echelon 2>/dev/null || true)
+  priority=$(sidecar_attr_value "$file" priority 2>/dev/null || true)
+  checked=$(sidecar_attr_value "$file" checked 2>/dev/null || true)
+  upvotes=$(sidecar_attr_value "$file" upvotes 2>/dev/null || true)
+  case "$key" in
+    user.echelon|echelon) echelon=$value ;;
+    user.priority|priority) priority=$value ;;
+    user.checked|checked) checked=$value ;;
+    user.upvotes|upvotes) upvotes=$value ;;
+  esac
+  sidecar_write_attrs "$file" "$echelon" "$priority" "$checked" "$upvotes"
+}
+
+sidecar_unset_attr() {
+  file=$1
+  key=$2
+  echelon=$(sidecar_attr_value "$file" echelon 2>/dev/null || true)
+  priority=$(sidecar_attr_value "$file" priority 2>/dev/null || true)
+  checked=$(sidecar_attr_value "$file" checked 2>/dev/null || true)
+  upvotes=$(sidecar_attr_value "$file" upvotes 2>/dev/null || true)
+  case "$key" in
+    user.echelon|echelon) echelon='' ;;
+    user.priority|priority) priority='' ;;
+    user.checked|checked) checked='' ;;
+    user.upvotes|upvotes) upvotes='' ;;
+  esac
+  if [ -z "$echelon" ] && [ -z "$priority" ] && [ -z "$checked" ] && [ -z "$upvotes" ]; then
+    rm -f "$(sidecar_path "$file")"
+    return 0
+  fi
+  sidecar_write_attrs "$file" "$echelon" "$priority" "$checked" "$upvotes"
+}
+
+rename_sidecar_for_path() {
+  old_path=$1
+  new_path=$2
+  old_sidecar=$(sidecar_path "$old_path")
+  new_sidecar=$(sidecar_path "$new_path")
+  [ -f "$old_sidecar" ] || return 0
+  if [ -e "$new_sidecar" ]; then
+    rm -f -- "$old_sidecar"
+    return 0
+  fi
+  mv -- "$old_sidecar" "$new_sidecar" >/dev/null 2>&1 || true
+}
 
 unquote_attr_value() {
   value=$1
@@ -223,7 +355,11 @@ set_user_attr() {
   file=$1
   key=$2
   value=$3
+  sidecar_set_attr "$file" "$key" "$value"
   case "$ATTR_BACKEND" in
+    sidecar)
+      return 0
+      ;;
     xattr)
       xattr -w "user.$key" "$value" "$file" >/dev/null 2>&1
       ;;
@@ -242,7 +378,11 @@ set_user_attr() {
 unset_user_attr() {
   file=$1
   key=$2
+  sidecar_unset_attr "$file" "$key"
   case "$ATTR_BACKEND" in
+    sidecar)
+      return 0
+      ;;
     xattr)
       xattr -d "user.$key" "$file" >/dev/null 2>&1 || true
       ;;
@@ -260,6 +400,14 @@ unset_user_attr() {
 
 child_has_echelon() {
   child=$1
+  child_echelon=$(sidecar_attr_value "$child" echelon 2>/dev/null || true)
+  if [ -n "$child_echelon" ]; then
+    case "$child_echelon" in
+      *Error*|*[!0-9]*) return 1 ;;
+    esac
+    [ "$child_echelon" -ge 1 ]
+    return $?
+  fi
   case "$ATTR_BACKEND" in
     xattr)
       child_echelon=$(xattr -p user.echelon "$child" 2>/dev/null || true)
@@ -289,7 +437,18 @@ read_item_attrs() {
   attr_checked=''
   attr_upvotes=''
 
+  attr_echelon=$(sidecar_attr_value "$file" echelon 2>/dev/null || true)
+  attr_priority=$(sidecar_attr_value "$file" priority 2>/dev/null || true)
+  attr_checked=$(sidecar_attr_value "$file" checked 2>/dev/null || true)
+  attr_upvotes=$(sidecar_attr_value "$file" upvotes 2>/dev/null || true)
+  if [ -n "$attr_echelon$attr_priority$attr_checked$attr_upvotes" ]; then
+    return 0
+  fi
+
   case "$ATTR_BACKEND" in
+    sidecar)
+      return 0
+      ;;
     xattr)
       dump=$(xattr -l "$file" 2>/dev/null || true)
       if [ -n "$dump" ]; then
@@ -463,6 +622,7 @@ collect_prioritized_rows_xattr() {
     if [ -d "$single_path" ]; then
       for child in "$single_path"/*; do
         [ -e "$child" ] || continue
+        is_sidecar_file "$child" && continue
         if child_has_echelon "$child"; then
           has_sub=1
           break
@@ -548,6 +708,7 @@ collect_prioritized_rows_xattr() {
     if [ -d "$path" ]; then
       for child in "$path"/*; do
         [ -e "$child" ] || continue
+        is_sidecar_file "$child" && continue
         if child_has_echelon "$child"; then
           has_sub=1
           break
@@ -590,6 +751,7 @@ collect_prioritized_rows_getfattr() {
     if [ -d "$single_path" ]; then
       for child in "$single_path"/*; do
         [ -e "$child" ] || continue
+        is_sidecar_file "$child" && continue
         if child_has_echelon "$child"; then
           has_sub=1
           break
@@ -675,6 +837,7 @@ collect_prioritized_rows_getfattr() {
     if [ -d "$path" ]; then
       for child in "$path"/*; do
         [ -e "$child" ] || continue
+        is_sidecar_file "$child" && continue
         if child_has_echelon "$child"; then
           has_sub=1
           break
@@ -828,9 +991,10 @@ EOF
       esac
       ;;
     *)
-      for f in "$directory"/*; do
-        [ -e "$f" ] || continue
-        read_item_attrs "$f"
+  for f in "$directory"/*; do
+    [ -e "$f" ] || continue
+    is_sidecar_file "$f" && continue
+    read_item_attrs "$f"
         file_echelon=$attr_echelon
         file_priority=$attr_priority
         case "$file_echelon" in
@@ -1027,6 +1191,7 @@ safe_trash_impl() {
   detect_trash_backend
 
   if [ "$TRASH_BACKEND" != "none" ] && try_trash_backend "$TRASH_BACKEND"; then
+    rm -f -- "$(sidecar_path "$target")" >/dev/null 2>&1 || true
     return 0
   fi
 
@@ -1043,6 +1208,7 @@ safe_trash_impl() {
     esac
     if try_trash_backend "$backend"; then
       TRASH_BACKEND=$backend
+      rm -f -- "$(sidecar_path "$target")" >/dev/null 2>&1 || true
       return 0
     fi
   done
@@ -1067,7 +1233,7 @@ descendant_count_impl() {
     return 0
   fi
 
-  count=$(find "$target" -mindepth 1 -print 2>/dev/null | wc -l | tr -d '[:space:]')
+  count=$(find "$target" -mindepth 1 ! -name '*.xattr.json' -print 2>/dev/null | wc -l | tr -d '[:space:]')
   case "$count" in
     ''|*[!0-9]*) count=0 ;;
   esac
@@ -1269,6 +1435,7 @@ emit_list() {
 
   for item in "$dir"/*; do
     [ -e "$item" ] || continue
+    is_sidecar_file "$item" && continue
 
     read_item_attrs "$item"
     echelon=$attr_echelon
@@ -1295,6 +1462,7 @@ emit_list() {
       kind='dir'
       for child in "$item"/*; do
         [ -e "$child" ] || continue
+        is_sidecar_file "$child" && continue
         if child_has_echelon "$child"; then
           has_subpriorities=1
           break
@@ -1341,7 +1509,13 @@ markdown_lines_for_dir() {
     printf '%s- [%s] %s\n' "$indent" "$mark" "$clean_name"
 
     if [ "$expanded" = "1" ] && [ "$kind" = "dir" ] && [ "$has_subpriorities" = "1" ]; then
+      saved_dir=$dir
+      saved_depth=$depth
+      saved_expanded=$expanded
       markdown_lines_for_dir "$path" $((depth + 1)) "$expanded"
+      dir=$saved_dir
+      depth=$saved_depth
+      expanded=$saved_expanded
     fi
   done
 }
@@ -1462,6 +1636,7 @@ prioritize_emit_impl() {
   else
     for item in "$directory"/*; do
       [ -e "$item" ] || continue
+      is_sidecar_file "$item" && continue
 
       read_item_attrs "$item"
       row_echelon=$attr_echelon
@@ -1502,6 +1677,7 @@ prioritize_emit_impl() {
         row_kind='dir'
         for child in "$item"/*; do
           [ -e "$child" ] || continue
+          is_sidecar_file "$child" && continue
           if child_has_echelon "$child"; then
             row_has_sub=1
             break
@@ -1581,6 +1757,7 @@ prioritize_emit_impl() {
       target_kind='dir'
       for child in "$target"/*; do
         [ -e "$child" ] || continue
+        is_sidecar_file "$child" && continue
         if child_has_echelon "$child"; then
           target_has_sub=1
           break
@@ -1776,6 +1953,7 @@ case "$action" in
       exit 1
     fi
     mv -- "$target" "$renamed_path"
+    rename_sidecar_for_path "$target" "$renamed_path"
     cleanup_project_placeholder_after_rename "$renamed_path" "$old_name"
     printf '%s\n' "$renamed_path"
     ;;
@@ -1810,6 +1988,7 @@ case "$action" in
       exit 1
     fi
     mv -- "$target" "$renamed_path"
+    rename_sidecar_for_path "$target" "$renamed_path"
     cleanup_project_placeholder_after_rename "$renamed_path" "$old_name"
     emit_list "$parent_dir"
     ;;

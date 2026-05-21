@@ -76,6 +76,10 @@
           <button id="refresh" type="button">Refresh</button>
         </div>
       </div>
+      <div class="settings-row settings-note-row">
+        <span></span>
+        <p class="settings-note">For phone and tablet sync, point this at a folder synced by <a href="https://syncthing.net/" target="_blank" rel="noopener">Syncthing</a>.</p>
+      </div>
       <div class="settings-row">
         <label for="theme-picker-btn">Theme</label>
         <div class="menu-anchor">
@@ -398,6 +402,32 @@
       var stderr = String((res && res.stderr) || '').trim();
       var stdout = String((res && res.stdout) || '').trim();
       throw new Error(stderr || stdout || ('exit ' + code));
+    }
+
+    async function tryMobilePrioritiesExec(args) {
+      if (!window.wizardry || typeof window.wizardry.rpc !== 'function') {
+        return null;
+      }
+      try {
+        var res = await window.wizardry.rpc('priorities.exec', { argv: args });
+        if (res && res.error && String(res.error.message || '').indexOf('method not found') >= 0) {
+          return null;
+        }
+        if (res && typeof res.exit_code !== 'undefined') {
+          var code = Number(res.exit_code);
+          if (!Number.isFinite(code) || code === 0) {
+            return res;
+          }
+          throw new Error(String(res.stderr || res.stdout || ('exit ' + code)).trim());
+        }
+        return null;
+      } catch (error) {
+        var msg = String(error && error.message ? error.message : error);
+        if (msg.indexOf('unsupported rpc method') >= 0 || msg.indexOf('method not found') >= 0) {
+          return null;
+        }
+        throw error;
+      }
     }
 
     async function syncHostPrioritiesDragHole() {
@@ -1083,6 +1113,10 @@
     }
 
     async function runBackend(args) {
+      var mobileResult = await tryMobilePrioritiesExec(args);
+      if (mobileResult) {
+        return mobileResult;
+      }
       var candidates = [];
       if (state.backendScriptPath) {
         candidates.push(state.backendScriptPath);

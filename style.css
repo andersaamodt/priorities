@@ -319,6 +319,22 @@ h1 {
   box-shadow: 0 8px 24px var(--shadow, rgba(27, 22, 56, 0.07));
 }
 
+.settings-note-row {
+  align-items: start;
+}
+
+.settings-note {
+  margin: 0;
+  max-width: 44ch;
+  color: var(--light-text, #5d6486);
+  font-size: calc(13px * var(--ui-scale));
+  line-height: 1.35;
+}
+
+.settings-note a {
+  color: color-mix(in srgb, var(--accent, #7782d6) 78%, var(--text, #2a2e47) 22%);
+}
+
 .settings-panel.popover {
   position: fixed;
   left: calc(14px * var(--ui-scale));

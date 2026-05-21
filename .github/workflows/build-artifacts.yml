@@ -1,0 +1,288 @@
+name: Build Artifacts
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+  workflow_call:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  WIZARDRY_APPS_REF: main
+
+jobs:
+  validate:
+    name: Validate app contract
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out priorities
+        uses: actions/checkout@v4
+        with:
+          path: priorities
+
+      - name: Check out Forge pipeline
+        uses: actions/checkout@v4
+        with:
+          repository: andersaamodt/wizardry-apps
+          ref: ${{ env.WIZARDRY_APPS_REF }}
+          path: wizardry-apps
+
+      - name: Install dependencies
+        run: sudo apt-get update && sudo apt-get install -y jq
+
+      - name: Validate manifests and backend
+        run: |
+          set -eu
+          sh priorities/scripts/priorities-backend.sh --help >/dev/null
+          WIZARDRY_APPS_ROOT="$PWD/wizardry-apps" sh wizardry-apps/tools/validate-manifest.sh
+
+      - name: Smoke-test Syncthing-compatible metadata backend
+        run: |
+          set -eu
+          data_dir="$RUNNER_TEMP/priorities-data"
+          mkdir -p "$data_dir/Inbox"
+          export PRIORITIES_ATTR_BACKEND=sidecar
+
+          sh priorities/scripts/priorities-backend.sh add "$data_dir/Inbox" One.md
+          sh priorities/scripts/priorities-backend.sh list "$data_dir/Inbox" >"$RUNNER_TEMP/priorities-list.tsv"
+
+          test -f "$data_dir/Inbox/One.md.xattr.json"
+          grep -q "One.md" "$RUNNER_TEMP/priorities-list.tsv"
+
+  linux:
+    name: Build Linux AppImage
+    needs: validate
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out priorities
+        uses: actions/checkout@v4
+        with:
+          path: priorities
+
+      - name: Check out Forge pipeline
+        uses: actions/checkout@v4
+        with:
+          repository: andersaamodt/wizardry-apps
+          ref: ${{ env.WIZARDRY_APPS_REF }}
+          path: wizardry-apps
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y jq wget file libfuse2 gcc pkg-config libgtk-3-dev libwebkit2gtk-4.1-dev
+
+      - name: Build Linux host
+        run: |
+          set -eu
+          cc -O2 wizardry-apps/apps/.host/linux/main.c -o "$RUNNER_TEMP/wizardry-host" $(pkg-config --cflags --libs gtk+-3.0 webkit2gtk-4.1)
+
+      - name: Stage app assets
+        run: |
+          set -eu
+          sh wizardry-apps/tools/release/stage-web-assets.sh priorities "$RUNNER_TEMP/priorities-linux-stage"
+
+      - name: Download appimagetool
+        run: |
+          set -eu
+          wget -q https://github.com/AppImage/AppImageKit/releases/download/continuous/appimagetool-x86_64.AppImage -O "$RUNNER_TEMP/appimagetool"
+          chmod +x "$RUNNER_TEMP/appimagetool"
+
+      - name: Build AppImage
+        run: |
+          set -eu
+          app=priorities
+          appdir="$RUNNER_TEMP/AppDir-$app"
+          rm -rf "$appdir"
+          mkdir -p "$appdir/usr/bin" "$appdir/usr/share/$app" "$appdir/usr/share/wizardry-apps/core" dist/linux
+          cp -R "$RUNNER_TEMP/priorities-linux-stage"/app/. "$appdir/usr/share/$app/"
+          cp -R "$RUNNER_TEMP/priorities-linux-stage"/core/. "$appdir/usr/share/wizardry-apps/core/"
+          cp "$RUNNER_TEMP/wizardry-host" "$appdir/usr/bin/"
+          cat > "$appdir/AppRun" <<'APP'
+          #!/bin/sh
+          set -eu
+          HERE=$(CDPATH= cd -- "$(dirname "$0")" && pwd -P)
+          exec "$HERE/usr/bin/wizardry-host" "$HERE/usr/share/priorities"
+          APP
+          sed -i 's/^          //' "$appdir/AppRun"
+          chmod +x "$appdir/AppRun"
+          ARCH=x86_64 "$RUNNER_TEMP/appimagetool" "$appdir" "dist/linux/priorities-x86_64.AppImage"
+
+      - name: AppImage smoke check
+        run: |
+          set -eu
+          test -s dist/linux/priorities-x86_64.AppImage
+          file dist/linux/priorities-x86_64.AppImage
+
+      - name: Upload Linux artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: priorities-linux
+          path: dist/linux/*.AppImage
+
+  macos:
+    name: Build macOS App
+    needs: validate
+    runs-on: macos-latest
+    steps:
+      - name: Check out priorities
+        uses: actions/checkout@v4
+        with:
+          path: priorities
+
+      - name: Check out Forge pipeline
+        uses: actions/checkout@v4
+        with:
+          repository: andersaamodt/wizardry-apps
+          ref: ${{ env.WIZARDRY_APPS_REF }}
+          path: wizardry-apps
+
+      - name: Install dependencies
+        run: brew install jq || true
+
+      - name: Build macOS host
+        run: |
+          set -eu
+          clang -O2 -fobjc-arc -fmodules wizardry-apps/apps/.host/macos/main.m -o "$RUNNER_TEMP/wizardry-host" -framework Cocoa -framework WebKit
+
+      - name: Stage app assets
+        run: |
+          set -eu
+          sh wizardry-apps/tools/release/stage-web-assets.sh priorities "$RUNNER_TEMP/priorities-macos-stage"
+
+      - name: Build .app bundle
+        run: |
+          set -eu
+          app=priorities
+          app_name=$(WIZARDRY_APPS_ROOT="$PWD/wizardry-apps" sh wizardry-apps/tools/release/get-app-name.sh "$app")
+          bundle_id=$(WIZARDRY_APPS_ROOT="$PWD/wizardry-apps" sh wizardry-apps/tools/release/get-app-bundle-id.sh macos "$app")
+          bundle="dist/macos/${app_name}.app"
+          mkdir -p "$bundle/Contents/MacOS" "$bundle/Contents/Resources/$app" "$bundle/Contents/Resources/wizardry-apps/core"
+          cp -R "$RUNNER_TEMP/priorities-macos-stage"/app/. "$bundle/Contents/Resources/$app/"
+          cp -R "$RUNNER_TEMP/priorities-macos-stage"/core/. "$bundle/Contents/Resources/wizardry-apps/core/"
+          cp "$RUNNER_TEMP/wizardry-host" "$bundle/Contents/MacOS/wizardry-host"
+          cat > "$bundle/Contents/MacOS/$app" <<'APP'
+          #!/bin/sh
+          set -eu
+          APPDIR=$(CDPATH= cd -- "$(dirname "$0")/.." && pwd -P)
+          exec "$APPDIR/MacOS/wizardry-host" "$APPDIR/Resources/priorities"
+          APP
+          sed -i '' 's/^          //' "$bundle/Contents/MacOS/$app"
+          chmod +x "$bundle/Contents/MacOS/$app"
+          cat > "$bundle/Contents/Info.plist" <<PLIST
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0"><dict>
+          <key>CFBundleName</key><string>$app_name</string>
+          <key>CFBundleDisplayName</key><string>$app_name</string>
+          <key>CFBundleIdentifier</key><string>$bundle_id</string>
+          <key>CFBundleVersion</key><string>1.0</string>
+          <key>CFBundlePackageType</key><string>APPL</string>
+          <key>CFBundleExecutable</key><string>$app</string>
+          </dict></plist>
+          PLIST
+          sed -i '' 's/^          //' "$bundle/Contents/Info.plist"
+          ditto -c -k --sequesterRsrc --keepParent "$bundle" "dist/macos/${app_name}.zip"
+
+      - name: Upload macOS artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: priorities-macos
+          path: dist/macos/*.zip
+
+  android:
+    name: Build Android APK
+    needs: validate
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out priorities
+        uses: actions/checkout@v4
+        with:
+          path: priorities
+
+      - name: Check out Forge pipeline
+        uses: actions/checkout@v4
+        with:
+          repository: andersaamodt/wizardry-apps
+          ref: ${{ env.WIZARDRY_APPS_REF }}
+          path: wizardry-apps
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.7'
+
+      - name: Install dependencies
+        run: sudo apt-get update && sudo apt-get install -y jq
+
+      - name: Stage Android project
+        run: |
+          set -eu
+          sh wizardry-apps/tools/release/prepare-android-host.sh priorities-mobile "$RUNNER_TEMP/priorities-mobile-android"
+
+      - name: Build debug APK
+        run: |
+          set -eu
+          app=priorities-mobile
+          app_name=$(WIZARDRY_APPS_ROOT="$PWD/wizardry-apps" sh wizardry-apps/tools/release/get-app-name.sh "$app")
+          app_id=$(WIZARDRY_APPS_ROOT="$PWD/wizardry-apps" sh wizardry-apps/tools/release/get-app-bundle-id.sh android "$app")
+          mkdir -p dist/android
+          gradle -p "$RUNNER_TEMP/priorities-mobile-android" :app:assembleDebug \
+            -PwizardryApplicationId="$app_id" \
+            -PwizardryAppName="$app_name" \
+            -PwizardryVersionName="0.0.0-${GITHUB_RUN_NUMBER}" \
+            -PwizardryVersionCode="${GITHUB_RUN_NUMBER}"
+          apk=$(find "$RUNNER_TEMP/priorities-mobile-android/app/build/outputs/apk/debug" -type f -name '*.apk' | head -n 1)
+          test -n "$apk"
+          cp "$apk" dist/android/priorities-mobile-debug.apk
+
+      - name: Upload Android artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: priorities-android
+          path: dist/android/*.apk
+
+  ios:
+    name: Build iOS Simulator App
+    needs: validate
+    runs-on: macos-latest
+    steps:
+      - name: Check out priorities
+        uses: actions/checkout@v4
+        with:
+          path: priorities
+
+      - name: Check out Forge pipeline
+        uses: actions/checkout@v4
+        with:
+          repository: andersaamodt/wizardry-apps
+          ref: ${{ env.WIZARDRY_APPS_REF }}
+          path: wizardry-apps
+
+      - name: Install dependencies
+        run: brew install jq xcodegen
+
+      - name: Build iOS simulator app
+        run: |
+          set -eu
+          mkdir -p dist/ios
+          WIZARDRY_APPS_ROOT="$PWD/wizardry-apps" sh wizardry-apps/tools/release/build-ios-app.sh priorities-mobile dist/ios smoke
+
+      - name: Upload iOS artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: priorities-ios
+          path: dist/ios/*.zip

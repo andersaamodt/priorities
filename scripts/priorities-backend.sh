@@ -14,6 +14,8 @@ Actions:
   list [DIR]            List prioritized items in DIR (default: current dir)
   copy-priorities [DIR] [--expanded]
                         Copy priorities as markdown checklist to clipboard
+  send-support-zap PAYLOAD_B64
+                        Send a Support Development zap through Nostr Wallet Connect
   prioritize PATH       Promote PATH using the prioritize spell
   prioritize-quick PATH Promote PATH and print: echelon<tab>priority<tab>checked
   check-toggle PATH     Toggle checked state using check/uncheck spells
@@ -1848,6 +1850,14 @@ case "$action" in
       exit 1
     fi
     printf '%s\n' "$markdown"
+    ;;
+
+  send-support-zap)
+    command -v node >/dev/null 2>&1 || {
+      printf 'ok=0\nmessage=Priorities needs Node.js to send Support Development zaps.\n'
+      exit 0
+    }
+    node "$SCRIPT_DIR/support-dev-zap.mjs" "${1-}"
     ;;
 
   prioritize)

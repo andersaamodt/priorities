@@ -104,6 +104,69 @@
           <button id="text-size-reset" type="button" class="scale-reset" title="Reset scale">Reset</button>
         </div>
       </div>
+      <section class="support-dev-panel" aria-labelledby="support-dev-title">
+        <div class="support-dev-head">
+          <div>
+            <h2 id="support-dev-title">Support Development</h2>
+            <p>Optional Lightning zaps can support Priorities when selected task actions succeed.</p>
+          </div>
+          <div class="support-dev-total" aria-label="Total support sent">
+            <span>Sent</span>
+            <strong id="support-dev-total">0 sats</strong>
+          </div>
+        </div>
+        <p class="settings-note support-dev-intro" id="support-dev-intro"></p>
+        <div class="support-dev-actions">
+          <button id="support-dev-copy-address" type="button" class="support-dev-small-btn">Copy Zap Address</button>
+          <button id="support-dev-copy-note" type="button" class="support-dev-small-btn">Copy Note</button>
+          <button id="support-dev-open-zap" type="button" class="support-dev-small-btn">Open Zap</button>
+          <button id="support-dev-send-now" type="button" class="support-dev-primary-btn">Send Zap Now</button>
+        </div>
+        <div class="support-dev-grid">
+          <label class="support-dev-field support-dev-wide">
+            <span>Wallet connection</span>
+            <input id="support-dev-nwc" type="password" placeholder="nostr+walletconnect://..." spellcheck="false">
+          </label>
+          <label class="support-dev-check support-dev-wide">
+            <input id="support-dev-enabled" type="checkbox">
+            <span>Enable usage-based zaps</span>
+          </label>
+          <div class="support-dev-action-list support-dev-wide" role="group" aria-label="Usage-based zap actions">
+            <label class="support-dev-check">
+              <input type="checkbox" data-support-dev-action="createTask">
+              <span>When I create a task</span>
+            </label>
+            <label class="support-dev-check">
+              <input type="checkbox" data-support-dev-action="completeTask">
+              <span>When I complete a task</span>
+            </label>
+            <label class="support-dev-check">
+              <input type="checkbox" data-support-dev-action="reprioritizeTask">
+              <span>When I reprioritize a task</span>
+            </label>
+          </div>
+          <label class="support-dev-field">
+            <span>Usage amount</span>
+            <input id="support-dev-usage-amount" type="number" min="1" step="1">
+          </label>
+          <label class="support-dev-field">
+            <span>Daily limit</span>
+            <input id="support-dev-daily-limit" type="number" min="1" step="1">
+          </label>
+          <label class="support-dev-field">
+            <span>One-time amount</span>
+            <input id="support-dev-one-time-amount" type="number" min="1" step="1">
+          </label>
+          <label class="support-dev-field support-dev-wide">
+            <span>One-time note</span>
+            <input id="support-dev-one-time-note" type="text" placeholder="Thank you for making this app!" spellcheck="true">
+          </label>
+        </div>
+        <div class="support-dev-status-row">
+          <span id="support-dev-daily-copy">210 of 210 sats remain today.</span>
+          <span id="support-dev-status">Add a Nostr Wallet Connect URI to send zaps directly.</span>
+        </div>
+      </section>
     </section>
 
     <div id="loading-overlay" class="loading-overlay hidden" aria-hidden="true">
@@ -146,7 +209,35 @@
     var ROOT_KEY = 'priorities.root';
     var SNAPSHOT_PREF = 'startup_snapshot';
     var NEXT_ACTION_CACHE_KEY = 'wizardry.priorities.nextActionCache';
+    var SUPPORT_DEV_PREF = 'support_dev';
     var THEME_ASSET_VERSION = 'priorities20260220a';
+    var SUPPORT_DEV_INTRO = 'Support Priorities development with optional Lightning zaps. Usage-based zaps only run for the actions you enable and require your Nostr Wallet Connect URI.';
+    var SUPPORT_DEV_ACTIONS = [
+      { key: 'createTask', label: 'When I create a task' },
+      { key: 'completeTask', label: 'When I complete a task' },
+      { key: 'reprioritizeTask', label: 'When I reprioritize a task' }
+    ];
+    var DEFAULT_SUPPORT_DEV = {
+      target: 'zap@andersaamodt.com',
+      enabled: false,
+      nwcUri: '',
+      usageAmountSats: 21,
+      oneTimeAmountSats: 100,
+      dailyLimitSats: 210,
+      dailySentSats: 0,
+      dailySentDate: '',
+      oneTimeNote: '',
+      actions: {
+        createTask: false,
+        completeTask: false,
+        reprioritizeTask: false
+      },
+      totalSentSats: 0,
+      totalZapCount: 0,
+      lastZapAt: '',
+      lastZapOk: false,
+      lastZapMessage: ''
+    };
     var DEFAULT_THEMES = [
       'adept', 'alchemist', 'archmage', 'athenian', 'chronomancer', 'conjurer', 'druid',
       'empath', 'enchanter', 'geomancer', 'hermeticist', 'hierophant', 'illusionist',
@@ -215,6 +306,9 @@
       pointerClientY: null,
       pendingTrashUndo: null,
       pendingTrashSeq: 0,
+      supportDev: null,
+      supportDevSaveTimer: null,
+      supportDevZapInFlight: false,
       reorderAnimationPromise: null,
       reorderAnimationResolve: null
     };
@@ -327,6 +421,391 @@
         return '';
       }
       return prefValue(prefName, '');
+    }
+
+    function cloneSupportDevDefaults() {
+      return JSON.parse(JSON.stringify(DEFAULT_SUPPORT_DEV));
+    }
+
+    function supportDevConfig() {
+      if (!state.supportDev) {
+        state.supportDev = cloneSupportDevDefaults();
+      }
+      return state.supportDev;
+    }
+
+    function normalizeSupportDev(raw) {
+      var defaults = cloneSupportDevDefaults();
+      var parsed = null;
+      if (raw && typeof raw === 'object') {
+        parsed = raw;
+      } else {
+        try {
+          parsed = JSON.parse(String(raw || ''));
+        } catch (_) {
+          parsed = null;
+        }
+      }
+      if (!parsed || typeof parsed !== 'object') {
+        return defaults;
+      }
+      var out = defaults;
+      ['target', 'nwcUri', 'dailySentDate', 'oneTimeNote', 'lastZapAt', 'lastZapMessage'].forEach(function (key) {
+        if (typeof parsed[key] === 'string') {
+          out[key] = parsed[key];
+        }
+      });
+      ['enabled', 'lastZapOk'].forEach(function (key) {
+        if (typeof parsed[key] === 'boolean') {
+          out[key] = parsed[key];
+        }
+      });
+      ['usageAmountSats', 'oneTimeAmountSats', 'dailyLimitSats', 'dailySentSats', 'totalSentSats', 'totalZapCount'].forEach(function (key) {
+        var value = Number(parsed[key]);
+        if (Number.isFinite(value)) {
+          out[key] = Math.max(0, Math.round(value));
+        }
+      });
+      out.usageAmountSats = Math.max(1, out.usageAmountSats || defaults.usageAmountSats);
+      out.oneTimeAmountSats = Math.max(1, out.oneTimeAmountSats || defaults.oneTimeAmountSats);
+      out.dailyLimitSats = Math.max(1, out.dailyLimitSats || defaults.dailyLimitSats);
+      out.actions = cloneSupportDevDefaults().actions;
+      if (parsed.actions && typeof parsed.actions === 'object') {
+        SUPPORT_DEV_ACTIONS.forEach(function (item) {
+          out.actions[item.key] = parsed.actions[item.key] === true;
+        });
+      }
+      return out;
+    }
+
+    function loadSupportDevPrefs() {
+      state.supportDev = normalizeSupportDev(state.uiPrefs[SUPPORT_DEV_PREF] || '');
+    }
+
+    function persistSupportDevPrefs() {
+      if (state.supportDevSaveTimer) {
+        clearTimeout(state.supportDevSaveTimer);
+      }
+      state.supportDevSaveTimer = setTimeout(function () {
+        state.supportDevSaveTimer = null;
+        var payload = JSON.stringify(supportDevConfig());
+        state.uiPrefs[SUPPORT_DEV_PREF] = payload;
+        persistUiPref(SUPPORT_DEV_PREF, payload);
+      }, 160);
+    }
+
+    function supportDevAmount(value, fallback) {
+      var n = Math.round(Number(value) || Number(fallback) || 0);
+      return Math.max(1, n);
+    }
+
+    function supportDevUsageAmountSats() {
+      return supportDevAmount(supportDevConfig().usageAmountSats, DEFAULT_SUPPORT_DEV.usageAmountSats);
+    }
+
+    function supportDevOneTimeAmountSats() {
+      return supportDevAmount(supportDevConfig().oneTimeAmountSats, DEFAULT_SUPPORT_DEV.oneTimeAmountSats);
+    }
+
+    function supportDevDailyLimitSats() {
+      return supportDevAmount(supportDevConfig().dailyLimitSats, DEFAULT_SUPPORT_DEV.dailyLimitSats);
+    }
+
+    function supportDevCurrentDayKey(date) {
+      var d = date || new Date();
+      return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+    }
+
+    function supportDevDailySentSats(dayKey) {
+      var support = supportDevConfig();
+      var key = dayKey || supportDevCurrentDayKey();
+      if (support.dailySentDate !== key) {
+        return 0;
+      }
+      return Math.max(0, Math.round(Number(support.dailySentSats) || 0));
+    }
+
+    function supportDevUsageZapFitsDailyLimit(amountSats) {
+      var amount = supportDevAmount(amountSats, supportDevUsageAmountSats());
+      return supportDevDailySentSats() + amount <= supportDevDailyLimitSats();
+    }
+
+    function validNwcUri(value) {
+      var raw = String(value || '').trim();
+      if (!raw) {
+        return false;
+      }
+      try {
+        var parsed = new URL(raw);
+        return parsed.protocol === 'nostr+walletconnect:' && !!(parsed.hostname && parsed.searchParams.get('relay') && parsed.searchParams.get('secret'));
+      } catch (_) {
+        return false;
+      }
+    }
+
+    function supportDevTotalSentCopy() {
+      var total = Math.max(0, Math.round(Number(supportDevConfig().totalSentSats) || 0));
+      return total.toLocaleString() + ' ' + (total === 1 ? 'sat' : 'sats');
+    }
+
+    function supportDevDailyLimitCopy() {
+      var sent = supportDevDailySentSats();
+      var limit = supportDevDailyLimitSats();
+      var remaining = Math.max(0, limit - sent);
+      return remaining.toLocaleString() + ' of ' + limit.toLocaleString() + ' sats remain today.';
+    }
+
+    function supportDevStatusLine() {
+      var support = supportDevConfig();
+      if (state.supportDevZapInFlight) {
+        return 'Sending Support Development zap through your wallet.';
+      }
+      if (support.lastZapMessage) {
+        return support.lastZapMessage;
+      }
+      if (!validNwcUri(support.nwcUri)) {
+        return 'Add a Nostr Wallet Connect URI to send zaps directly.';
+      }
+      return 'Wallet connection is ready.';
+    }
+
+    function parseBackendLine(text, key) {
+      var prefix = String(key || '') + '=';
+      var lines = String(text || '').split('\n');
+      for (var i = 0; i < lines.length; i += 1) {
+        if (lines[i].indexOf(prefix) === 0) {
+          return lines[i].slice(prefix.length);
+        }
+      }
+      return '';
+    }
+
+    function encodeBase64Utf8(text) {
+      return window.btoa(unescape(encodeURIComponent(String(text || ''))));
+    }
+
+    function supportDevPreparedNote(actionKey, label) {
+      if (actionKey === 'manual') {
+        return String(supportDevConfig().oneTimeNote || '').trim() || 'Support Priorities development.';
+      }
+      return 'Priorities support zap: ' + String(label || actionKey || 'usage action') + '.';
+    }
+
+    function supportDevLightningUrl(actionKey, label, amountSats) {
+      var support = supportDevConfig();
+      var target = String(support.target || DEFAULT_SUPPORT_DEV.target).trim() || DEFAULT_SUPPORT_DEV.target;
+      var note = supportDevPreparedNote(actionKey || 'manual', label || 'one-time support');
+      return 'lightning:' + target + '?amount=' + encodeURIComponent(String(supportDevAmount(amountSats, supportDevOneTimeAmountSats()))) + '&message=' + encodeURIComponent(note);
+    }
+
+    function syncSupportDevSettingsUI() {
+      var support = supportDevConfig();
+      var enabled = !!support.enabled;
+      var total = document.getElementById('support-dev-total');
+      if (total) total.textContent = supportDevTotalSentCopy();
+      var statusLine = document.getElementById('support-dev-status');
+      if (statusLine) statusLine.textContent = supportDevStatusLine();
+      var daily = document.getElementById('support-dev-daily-copy');
+      if (daily) daily.textContent = supportDevDailyLimitCopy();
+      var sendBtn = document.getElementById('support-dev-send-now');
+      if (sendBtn) {
+        sendBtn.disabled = state.supportDevZapInFlight || !validNwcUri(support.nwcUri);
+        sendBtn.textContent = state.supportDevZapInFlight ? 'Sending...' : 'Send Zap Now';
+      }
+      SUPPORT_DEV_ACTIONS.forEach(function (item) {
+        var input = document.querySelector('[data-support-dev-action="' + item.key + '"]');
+        if (input) {
+          input.checked = support.actions && support.actions[item.key] === true;
+          input.disabled = !enabled;
+          var label = input.closest('label');
+          if (label) {
+            label.classList.toggle('is-disabled', !enabled);
+          }
+        }
+      });
+    }
+
+    function setSupportDevField(key, value) {
+      var support = supportDevConfig();
+      if (key === 'enabled') {
+        support.enabled = !!value;
+      } else if (key === 'nwcUri' || key === 'oneTimeNote') {
+        support[key] = String(value || '');
+      } else if (key === 'usageAmountSats' || key === 'oneTimeAmountSats' || key === 'dailyLimitSats') {
+        support[key] = supportDevAmount(value, DEFAULT_SUPPORT_DEV[key]);
+      }
+      persistSupportDevPrefs();
+      syncSupportDevSettingsUI();
+    }
+
+    function setSupportDevAction(actionKey, enabled) {
+      var support = supportDevConfig();
+      if (!support.actions || typeof support.actions !== 'object') {
+        support.actions = cloneSupportDevDefaults().actions;
+      }
+      if (Object.prototype.hasOwnProperty.call(support.actions, actionKey)) {
+        support.actions[actionKey] = !!enabled;
+        persistSupportDevPrefs();
+      }
+      syncSupportDevSettingsUI();
+    }
+
+    function supportDevZapActionWillSend(actionKey) {
+      var support = supportDevConfig();
+      return !!(support.enabled && support.actions && support.actions[actionKey] && validNwcUri(support.nwcUri) && supportDevUsageZapFitsDailyLimit());
+    }
+
+    async function maybeSendSupportDevZap(actionKey, label, options) {
+      options = options || {};
+      var support = supportDevConfig();
+      var forced = !!options.force;
+      if (!forced && !supportDevZapActionWillSend(actionKey)) {
+        return null;
+      }
+      if (state.supportDevZapInFlight) {
+        if (forced) {
+          throw new Error('A Support Development zap is already in progress.');
+        }
+        return null;
+      }
+      if (!validNwcUri(support.nwcUri)) {
+        if (forced) {
+          throw new Error('Add a valid Nostr Wallet Connect URI before sending Support Development zaps.');
+        }
+        support.lastZapOk = false;
+        support.lastZapMessage = 'Support Development zap skipped: wallet connection is missing.';
+        persistSupportDevPrefs();
+        syncSupportDevSettingsUI();
+        return null;
+      }
+      var amountSats = forced ? supportDevOneTimeAmountSats() : supportDevUsageAmountSats();
+      if (!forced && !supportDevUsageZapFitsDailyLimit(amountSats)) {
+        support.lastZapOk = false;
+        support.lastZapMessage = 'Support Development zap skipped: daily limit reached.';
+        persistSupportDevPrefs();
+        syncSupportDevSettingsUI();
+        return null;
+      }
+      state.supportDevZapInFlight = true;
+      syncSupportDevSettingsUI();
+      var payload = {
+        app: 'Priorities',
+        action: actionKey || 'manual',
+        target: support.target || DEFAULT_SUPPORT_DEV.target,
+        amountSats: amountSats,
+        note: supportDevPreparedNote(actionKey || 'manual', label || 'one-time support'),
+        nwcUri: support.nwcUri
+      };
+      try {
+        var result = await runBackend(['send-support-zap', encodeBase64Utf8(JSON.stringify(payload))]);
+        var ok = result && parseBackendLine(result.stdout || '', 'ok') === '1';
+        var message = result ? parseBackendLine(result.stdout || '', 'message') : '';
+        support.lastZapAt = new Date().toISOString();
+        support.lastZapOk = ok;
+        support.lastZapMessage = message || (ok ? 'Sent Support Development zap.' : 'Support Development zap failed.');
+        if (ok) {
+          support.totalSentSats = Math.max(0, Math.round(Number(support.totalSentSats) || 0)) + amountSats;
+          support.totalZapCount = Math.max(0, Math.round(Number(support.totalZapCount) || 0)) + 1;
+          if (!forced) {
+            var dayKey = supportDevCurrentDayKey();
+            support.dailySentDate = dayKey;
+            support.dailySentSats = supportDevDailySentSats(dayKey) + amountSats;
+          }
+        }
+        persistSupportDevPrefs();
+        status(support.lastZapMessage, !ok, { placement: 'bottom', durationMs: 3200 });
+        return { ok: ok, amountSats: amountSats, message: support.lastZapMessage };
+      } finally {
+        state.supportDevZapInFlight = false;
+        syncSupportDevSettingsUI();
+      }
+    }
+
+    function triggerSupportDevZap(actionKey, label) {
+      maybeSendSupportDevZap(actionKey, label).catch(function (error) {
+        var support = supportDevConfig();
+        support.lastZapOk = false;
+        support.lastZapMessage = String(error && error.message ? error.message : error);
+        persistSupportDevPrefs();
+        syncSupportDevSettingsUI();
+        status(support.lastZapMessage, true, { placement: 'bottom', durationMs: 3600 });
+      });
+    }
+
+    function initSupportDevSettings() {
+      var intro = document.getElementById('support-dev-intro');
+      var enabled = document.getElementById('support-dev-enabled');
+      var wallet = document.getElementById('support-dev-nwc');
+      var usageAmount = document.getElementById('support-dev-usage-amount');
+      var dailyLimit = document.getElementById('support-dev-daily-limit');
+      var oneTimeAmount = document.getElementById('support-dev-one-time-amount');
+      var oneTimeNote = document.getElementById('support-dev-one-time-note');
+      var copyAddress = document.getElementById('support-dev-copy-address');
+      var copyNote = document.getElementById('support-dev-copy-note');
+      var openZap = document.getElementById('support-dev-open-zap');
+      var sendNow = document.getElementById('support-dev-send-now');
+      var support = supportDevConfig();
+
+      if (intro) {
+        intro.textContent = SUPPORT_DEV_INTRO;
+      }
+      if (enabled) {
+        enabled.checked = !!support.enabled;
+        enabled.addEventListener('change', function () { setSupportDevField('enabled', enabled.checked); });
+      }
+      if (wallet) {
+        wallet.value = support.nwcUri || '';
+        wallet.addEventListener('input', function () { setSupportDevField('nwcUri', wallet.value); });
+      }
+      if (usageAmount) {
+        usageAmount.value = String(supportDevUsageAmountSats());
+        usageAmount.addEventListener('change', function () { setSupportDevField('usageAmountSats', usageAmount.value); usageAmount.value = String(supportDevUsageAmountSats()); });
+      }
+      if (dailyLimit) {
+        dailyLimit.value = String(supportDevDailyLimitSats());
+        dailyLimit.addEventListener('change', function () { setSupportDevField('dailyLimitSats', dailyLimit.value); dailyLimit.value = String(supportDevDailyLimitSats()); });
+      }
+      if (oneTimeAmount) {
+        oneTimeAmount.value = String(supportDevOneTimeAmountSats());
+        oneTimeAmount.addEventListener('change', function () { setSupportDevField('oneTimeAmountSats', oneTimeAmount.value); oneTimeAmount.value = String(supportDevOneTimeAmountSats()); });
+      }
+      if (oneTimeNote) {
+        oneTimeNote.value = support.oneTimeNote || '';
+        oneTimeNote.addEventListener('input', function () { setSupportDevField('oneTimeNote', oneTimeNote.value); });
+      }
+      SUPPORT_DEV_ACTIONS.forEach(function (item) {
+        var input = document.querySelector('[data-support-dev-action="' + item.key + '"]');
+        if (input) {
+          input.addEventListener('change', function () { setSupportDevAction(item.key, input.checked); });
+        }
+      });
+      if (copyAddress) {
+        copyAddress.addEventListener('click', function () {
+          copyTextToClipboard(supportDevConfig().target || DEFAULT_SUPPORT_DEV.target).then(function (ok) {
+            status(ok ? 'Copied support zap address.' : 'Could not copy support zap address.', !ok);
+          });
+        });
+      }
+      if (copyNote) {
+        copyNote.addEventListener('click', function () {
+          copyTextToClipboard(supportDevPreparedNote('manual', 'one-time support')).then(function (ok) {
+            status(ok ? 'Copied support zap note.' : 'Could not copy support zap note.', !ok);
+          });
+        });
+      }
+      if (openZap) {
+        openZap.addEventListener('click', function () {
+          window.location.href = supportDevLightningUrl('manual', 'one-time support', supportDevOneTimeAmountSats());
+        });
+      }
+      if (sendNow) {
+        sendNow.addEventListener('click', function () {
+          maybeSendSupportDevZap('manual', 'one-time support', { force: true }).catch(function (error) {
+            status(String(error && error.message ? error.message : error), true);
+          });
+        });
+      }
+      syncSupportDevSettingsUI();
     }
 
     function clampTextScale(value) {
@@ -3608,6 +4087,7 @@
             await waitForReorderAnimationBarrier();
             await render({ suppressLoadingOverlay: true });
           }
+          triggerSupportDevZap('reprioritizeTask', 'reprioritize a task');
         } catch (error) {
           if (previousItems) {
             setCachedDirItems(parentDir, previousItems);
@@ -3661,6 +4141,7 @@
               }
               var refreshed = await listDir(entry.dir);
               setCachedDirItems(entry.dir, refreshed);
+              triggerSupportDevZap('createTask', 'create a task');
             } catch (error) {
               rollbackOptimisticAdd(entry.optimisticAdd);
               if (!String(state.pendingAddText || '').trim()) {
@@ -3915,6 +4396,9 @@
           // successful backend result; this prevents row-control flicker.
           if (!hadOptimisticTouch) {
             await render({ suppressLoadingOverlay: true, preserveInputSelection: true });
+          }
+          if (readCachedCheckedValue(path) === 1) {
+            triggerSupportDevZap('completeTask', 'complete a task');
           }
         } catch (error) {
           try {
@@ -4223,6 +4707,11 @@
       panel.classList.toggle('hidden', !open);
       button.setAttribute('aria-expanded', open ? 'true' : 'false');
       button.classList.toggle('active', open);
+      panel.style.transition = 'none';
+      panel.style.opacity = open ? '1' : '0';
+      panel.style.visibility = open ? 'visible' : 'hidden';
+      panel.style.pointerEvents = open ? 'auto' : 'none';
+      panel.style.transform = open ? 'translateY(0) scale(1)' : 'translateY(calc(6px * var(--ui-scale))) scale(0.985)';
       if (!open) {
         closeThemePickerMenu();
       }
@@ -4232,6 +4721,7 @@
       requestWindowShape();
       var bootRevealTimer = setTimeout(revealBootUi, 8000);
       await loadUiPrefs();
+      loadSupportDevPrefs();
       loadNextActionLabelCacheFromPrefs();
       state.activeTheme = String(loadStorage(THEME_KEY) || 'psionic').toLowerCase().trim();
       await loadThemes();
@@ -4441,6 +4931,7 @@
         state.fontHotkeysEnabled = true;
         state.arrowCycleTarget = 'font';
       });
+      initSupportDevSettings();
 
       document.addEventListener('click', function (event) {
         var inThemePicker = event.target.closest('#theme-picker-menu') || event.target.closest('#theme-picker-btn');

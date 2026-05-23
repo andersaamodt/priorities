@@ -16,6 +16,10 @@ Actions:
                         Copy priorities as markdown checklist to clipboard
   send-support-zap PAYLOAD_B64
                         Send a Support Development zap through Nostr Wallet Connect
+  download-update URL TAG ASSET
+                        Download a GitHub release asset into the update cache
+  install-update TAG ASSET
+                        Install a cached update and restart when supported
   prioritize PATH       Promote PATH using the prioritize spell
   prioritize-quick PATH Promote PATH and print: echelon<tab>priority<tab>checked
   check-toggle PATH     Toggle checked state using check/uncheck spells
@@ -118,6 +122,12 @@ priorities_ui_config_file() {
   printf '%s\n' "$base/config"
 }
 
+priorities_update_cache_dir() {
+  base="${XDG_CACHE_HOME:-$HOME/.cache}/wizardry-apps/priorities/updates"
+  mkdir -p "$base"
+  printf '%s\n' "$base"
+}
+
 validate_ui_pref_key() {
   key=${1-}
   case "$key" in
@@ -133,6 +143,135 @@ validate_ui_pref_key() {
 sanitize_ui_pref_value() {
   value=${1-}
   printf '%s' "$value" | tr '\r\n' ' '
+}
+
+safe_update_component() {
+  value=${1-}
+  printf '%s' "$value" | tr -c 'A-Za-z0-9._+-' '_'
+}
+
+validate_update_url() {
+  url=${1-}
+  case "$url" in
+    https://github.com/andersaamodt/priorities/releases/download/*)
+      ;;
+    *)
+      printf '%s\n' "priorities-backend: update URL must be a priorities GitHub release asset" >&2
+      exit 2
+      ;;
+  esac
+}
+
+cached_update_path() {
+  tag=$(safe_update_component "${1-}")
+  asset=$(safe_update_component "${2-}")
+  dir=$(priorities_update_cache_dir)
+  printf '%s/%s-%s\n' "$dir" "$tag" "$asset"
+}
+
+current_macos_bundle_path() {
+  case "$SCRIPT_DIR" in
+    *.app/Contents/Resources/*/scripts)
+      printf '%s\n' "${SCRIPT_DIR%%.app/Contents/Resources/*}.app"
+      return 0
+      ;;
+  esac
+  return 1
+}
+
+schedule_macos_update_install() {
+  artifact=$1
+  bundle=$(current_macos_bundle_path 2>/dev/null || true)
+  if [ -z "$bundle" ] || [ ! -d "$bundle" ]; then
+    printf '%s\n' "priorities-backend: macOS auto-install requires running from a .app bundle" >&2
+    exit 1
+  fi
+  command -v unzip >/dev/null 2>&1 || {
+    printf '%s\n' "priorities-backend: unzip is required to install macOS updates" >&2
+    exit 1
+  }
+  command -v open >/dev/null 2>&1 || {
+    printf '%s\n' "priorities-backend: open is required to restart macOS updates" >&2
+    exit 1
+  }
+
+  parent_pid=$PPID
+  log_dir=$(priorities_update_cache_dir)
+  installer=$(mktemp "${TMPDIR:-/tmp}/priorities-update.XXXXXX.sh")
+  cat >"$installer" <<'INSTALL'
+#!/bin/sh
+set -eu
+artifact=$1
+bundle=$2
+parent_pid=$3
+log_file=$4
+tmp_dir=$(mktemp -d "${TMPDIR:-/tmp}/priorities-update-install.XXXXXX")
+cleanup() {
+  rm -rf "$tmp_dir"
+  rm -f "$0"
+}
+trap cleanup EXIT
+{
+  sleep 0.25
+  kill -TERM "$parent_pid" 2>/dev/null || true
+  sleep 0.9
+  unzip -q "$artifact" -d "$tmp_dir"
+  app=$(find "$tmp_dir" -maxdepth 2 -type d -name '*.app' | head -n 1)
+  if [ -z "$app" ]; then
+    printf '%s\n' "installer: no .app found in update artifact"
+    exit 1
+  fi
+  old="${bundle}.old-priorities-update"
+  rm -rf "$old"
+  if [ -d "$bundle" ]; then
+    mv "$bundle" "$old"
+  fi
+  if command -v ditto >/dev/null 2>&1; then
+    ditto "$app" "$bundle"
+  else
+    cp -R "$app" "$bundle"
+  fi
+  rm -rf "$old"
+  /usr/bin/open -n "$bundle"
+} >>"$log_file" 2>&1
+INSTALL
+  chmod +x "$installer"
+  "$installer" "$artifact" "$bundle" "$parent_pid" "$log_dir/install.log" >/dev/null 2>&1 &
+  printf 'scheduled=1\nplatform=macos\n'
+}
+
+schedule_linux_update_install() {
+  artifact=$1
+  appimage=${APPIMAGE-}
+  if [ -z "$appimage" ] || [ ! -f "$appimage" ]; then
+    printf '%s\n' "priorities-backend: Linux auto-install requires running from an AppImage" >&2
+    exit 1
+  fi
+  parent_pid=$PPID
+  log_dir=$(priorities_update_cache_dir)
+  installer=$(mktemp "${TMPDIR:-/tmp}/priorities-update.XXXXXX.sh")
+  cat >"$installer" <<'INSTALL'
+#!/bin/sh
+set -eu
+artifact=$1
+appimage=$2
+parent_pid=$3
+log_file=$4
+{
+  sleep 0.25
+  kill -TERM "$parent_pid" 2>/dev/null || true
+  sleep 0.9
+  tmp="${appimage}.priorities-update"
+  cp "$artifact" "$tmp"
+  chmod +x "$tmp"
+  mv "$tmp" "$appimage"
+  nohup "$appimage" >/dev/null 2>&1 &
+  rm -f "$0"
+} >>"$log_file" 2>&1
+INSTALL
+  chmod +x "$installer"
+  "$installer" "$artifact" "$appimage" "$parent_pid" "$log_dir/install.log" >/dev/null 2>&1 &
+  printf 'scheduled=1\nplatform=linux\n'
 }
 
 write_key_value_file() {
@@ -1858,6 +1997,56 @@ case "$action" in
       exit 0
     }
     node "$SCRIPT_DIR/support-dev-zap.mjs" "${1-}"
+    ;;
+
+  download-update)
+    url=${1-}
+    tag=${2-}
+    asset=${3-}
+    if [ -z "$url" ] || [ -z "$tag" ] || [ -z "$asset" ]; then
+      printf '%s\n' "priorities-backend: download-update requires URL TAG ASSET" >&2
+      exit 2
+    fi
+    validate_update_url "$url"
+    command -v curl >/dev/null 2>&1 || {
+      printf '%s\n' "priorities-backend: curl is required to download updates" >&2
+      exit 1
+    }
+    dest=$(cached_update_path "$tag" "$asset")
+    tmp="${dest}.part"
+    if [ ! -s "$dest" ]; then
+      curl -fL --retry 2 --connect-timeout 10 -o "$tmp" "$url"
+      mv "$tmp" "$dest"
+    fi
+    printf 'downloaded=1\n'
+    printf 'path=%s\n' "$dest"
+    ;;
+
+  install-update)
+    tag=${1-}
+    asset=${2-}
+    if [ -z "$tag" ] || [ -z "$asset" ]; then
+      printf '%s\n' "priorities-backend: install-update requires TAG ASSET" >&2
+      exit 2
+    fi
+    artifact=$(cached_update_path "$tag" "$asset")
+    if [ ! -s "$artifact" ]; then
+      printf '%s\n' "priorities-backend: update artifact is not downloaded yet" >&2
+      exit 1
+    fi
+    os_name=$(uname -s 2>/dev/null || printf unknown)
+    case "$os_name:$asset" in
+      Darwin:*.zip)
+        schedule_macos_update_install "$artifact"
+        ;;
+      Linux:*.AppImage)
+        schedule_linux_update_install "$artifact"
+        ;;
+      *)
+        printf '%s\n' "priorities-backend: auto-install is not supported for this platform/artifact" >&2
+        exit 1
+        ;;
+    esac
     ;;
 
   prioritize)

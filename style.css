@@ -236,8 +236,38 @@ h1 {
   pointer-events: none;
 }
 
+.update-pill {
+  position: fixed;
+  left: calc(76px * var(--ui-scale));
+  top: calc(12px * var(--ui-scale));
+  z-index: 20;
+  width: fit-content;
+  max-width: calc(34vw - 24px * var(--ui-scale));
+  min-height: calc(28px * var(--ui-scale));
+  border: 1px solid color-mix(in srgb, var(--theme_blue, #3b82f6) 54%, var(--border, #d4d0e6) 46%);
+  border-radius: calc(999px * var(--ui-scale));
+  padding: calc(5px * var(--ui-scale)) calc(11px * var(--ui-scale));
+  background: color-mix(in srgb, var(--theme_blue, #3b82f6) 18%, var(--light-bg, #f8f7fc) 82%);
+  color: color-mix(in srgb, var(--theme_blue, #3b82f6) 76%, var(--text, #2a2e47) 24%);
+  font-size: calc(12px * var(--ui-scale));
+  font-weight: 650;
+  line-height: 1;
+  box-shadow: 0 5px 16px color-mix(in srgb, var(--theme_blue, #3b82f6) 16%, transparent);
+  -webkit-app-region: no-drag;
+  app-region: no-drag;
+}
+
+.update-pill:hover {
+  background: color-mix(in srgb, var(--theme_blue, #3b82f6) 24%, var(--light-bg, #f8f7fc) 76%);
+}
+
+.update-pill.hidden {
+  display: none;
+}
+
 /* Keep action controls from becoming text-selectable during rapid clicks/drags. */
 .corner-dock,
+.update-pill,
 .btn.pri,
 .btn.exp,
 .add-inline-btn,
@@ -383,6 +413,21 @@ h1 {
   letter-spacing: 0.05em;
   text-transform: uppercase;
   color: var(--light-text, #5d6486);
+}
+
+.settings-row .settings-check {
+  display: inline-flex;
+  align-items: center;
+  gap: calc(7px * var(--ui-scale));
+  width: fit-content;
+  max-width: 100%;
+  letter-spacing: 0;
+  text-transform: none;
+  color: var(--text, #2a2e47);
+}
+
+.settings-row .settings-check input {
+  margin: 0;
 }
 
 #folder-settings-row.root-dirty label::after {

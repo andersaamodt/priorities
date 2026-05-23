@@ -52,6 +52,7 @@
             <button id="dock-center" class="corner-dock corner-dock-center" type="button" title="Move to top-center" aria-label="Move to top-center">•</button>
             <button id="dock-right" class="corner-dock" type="button" title="Move to top-right corner" aria-label="Move to top-right corner">▶</button>
           </div>
+          <button id="update-pill" class="update-pill hidden" type="button">Update</button>
           <button id="settings-toggle" class="settings-toggle" type="button" aria-expanded="false" title="Settings">
             <svg class="settings-gear-glyph" viewBox="0 0 14 14" aria-hidden="true" focusable="false">
               <path d="M14 8.3V5.73l-1.58-.264c-.117-.44-.292-.848-.496-1.2l.93-1.285-1.81-1.84-1.31.908c-.371-.205-.781-.38-1.187-.497L8.288 0H5.72l-.263 1.578c-.437.117-.816.293-1.196.497L2.979 1.17 1.141 2.98l.934 1.287c-.2.38-.376.79-.493 1.228L.004 5.73V8.3l1.575.264c.117.438.292.818.496 1.198l-.93 1.315 1.809 1.813 1.312-.938c.38.205.787.38 1.224.497l.26 1.55h2.566l.263-1.58c.408-.117.817-.293 1.196-.497l1.315.935 1.81-1.812-.935-1.315c.203-.38.38-.76.495-1.2L14 8.305zM7 9.704c-1.488 0-2.683-1.2-2.683-2.69S5.542 4.327 7 4.327s2.683 1.198 2.683 2.69c0 1.49-1.195 2.688-2.683 2.688z" fill="currentColor"/>
@@ -79,6 +80,13 @@
       <div class="settings-row settings-note-row">
         <span></span>
         <p class="settings-note">For phone and tablet sync, point this at a folder synced by <a href="https://syncthing.net/" target="_blank" rel="noopener">Syncthing</a>.</p>
+      </div>
+      <div class="settings-row">
+        <label class="settings-check">
+          <input id="auto-update-enabled" type="checkbox">
+          <span>Check for updates automatically</span>
+        </label>
+        <p id="auto-update-status" class="settings-note">When enabled, Priorities checks GitHub Releases and pre-downloads the matching artifact.</p>
       </div>
       <div class="settings-row">
         <label for="theme-picker-btn">Theme</label>
@@ -213,6 +221,9 @@
     var ROOT_KEY = 'priorities.root';
     var SNAPSHOT_PREF = 'startup_snapshot';
     var NEXT_ACTION_CACHE_KEY = 'wizardry.priorities.nextActionCache';
+    var AUTO_UPDATE_PREF = 'auto_update_enabled';
+    var UPDATE_REPO = 'andersaamodt/priorities';
+    var UPDATE_API_URL = 'https://api.github.com/repos/' + UPDATE_REPO + '/releases/latest';
     var SUPPORT_DEV_PREF = 'support_dev';
     var THEME_ASSET_VERSION = 'priorities20260220a';
     var SUPPORT_DEV_INTRO = 'Support Priorities development with optional Lightning zaps. Usage-based zaps only run for the actions you enable and require your Nostr Wallet Connect URI.';
@@ -315,6 +326,11 @@
       supportDev: null,
       supportDevSaveTimer: null,
       supportDevZapInFlight: false,
+      autoUpdateEnabled: false,
+      updateCheckInFlight: false,
+      updateDownloadInFlight: false,
+      updateInfo: null,
+      buildInfo: null,
       reorderAnimationPromise: null,
       reorderAnimationResolve: null
     };
@@ -377,6 +393,7 @@
       if (storageKey === ROOT_KEY) return 'root';
       if (storageKey === SNAPSHOT_PREF) return SNAPSHOT_PREF;
       if (storageKey === NEXT_ACTION_CACHE_KEY) return 'next_action_cache';
+      if (storageKey === AUTO_UPDATE_PREF) return AUTO_UPDATE_PREF;
       return '';
     }
 
@@ -405,6 +422,241 @@
         state.uiPrefs = parseKeyValueText((result && result.stdout) || '');
       } catch (_) {
         state.uiPrefs = {};
+      }
+    }
+
+    function truthyPref(value) {
+      var text = String(value || '').toLowerCase().trim();
+      return text === '1' || text === 'true' || text === 'yes' || text === 'on';
+    }
+
+    function updateStatusCopy(text) {
+      var el = document.getElementById('auto-update-status');
+      if (el) {
+        el.textContent = text;
+      }
+    }
+
+    function syncUpdatePill() {
+      var pill = document.getElementById('update-pill');
+      if (!pill) {
+        return;
+      }
+      var info = state.updateInfo;
+      var ready = !!(info && info.asset && info.downloaded);
+      pill.classList.toggle('hidden', !ready);
+      if (ready) {
+        pill.textContent = 'Update';
+        pill.title = 'Install ' + (info.tag || 'the latest release');
+      }
+    }
+
+    function platformAssetPattern() {
+      var platform = detectPlatform();
+      var ua = String(navigator.userAgent || '').toLowerCase();
+      if (platform === 'mac') return /\.zip$/i;
+      if (platform === 'ios') return /\.zip$/i;
+      if (platform === 'linux') return /\.appimage$/i;
+      if (ua.indexOf('android') >= 0) return /\.apk$/i;
+      return /\.(appimage|zip|apk)$/i;
+    }
+
+    function scoreUpdateAsset(asset) {
+      var name = String((asset && asset.name) || '').toLowerCase();
+      var platform = detectPlatform();
+      var ua = String(navigator.userAgent || '').toLowerCase();
+      if (platform === 'mac' && name.indexOf('mac') >= 0) return 10;
+      if (platform === 'ios' && name.indexOf('ios') >= 0) return 10;
+      if (platform === 'linux' && name.indexOf('linux') >= 0) return 10;
+      if (ua.indexOf('android') >= 0 && name.indexOf('android') >= 0) return 10;
+      return 1;
+    }
+
+    function pickUpdateAsset(release) {
+      var assets = Array.isArray(release && release.assets) ? release.assets.slice() : [];
+      var pattern = platformAssetPattern();
+      return assets
+        .filter(function (asset) {
+          return asset && asset.browser_download_url && pattern.test(String(asset.name || ''));
+        })
+        .sort(function (a, b) {
+          return scoreUpdateAsset(b) - scoreUpdateAsset(a);
+        })[0] || null;
+    }
+
+    function normalizeVersionTag(value) {
+      return String(value || '').trim().replace(/^refs\/tags\//, '').replace(/^v/i, '');
+    }
+
+    async function loadBuildInfo() {
+      if (state.buildInfo) {
+        return state.buildInfo;
+      }
+      try {
+        var res = await fetch('assets/build-info.json', { cache: 'no-store' });
+        if (res && res.ok) {
+          state.buildInfo = await res.json();
+          return state.buildInfo;
+        }
+      } catch (_) {
+        // Local development builds do not always include generated build metadata.
+      }
+      state.buildInfo = { version: '0.0.0-dev', repository: UPDATE_REPO };
+      return state.buildInfo;
+    }
+
+    async function cacheUpdateAssetInBrowser(asset) {
+      if (!asset || !asset.browser_download_url || !('caches' in window)) {
+        return false;
+      }
+      var cache = await caches.open('priorities-updates');
+      var request = new Request(asset.browser_download_url, { mode: 'no-cors' });
+      await cache.add(request);
+      return true;
+    }
+
+    async function predownloadUpdateAsset(info) {
+      if (!info || !info.asset || state.updateDownloadInFlight) {
+        return false;
+      }
+      state.updateDownloadInFlight = true;
+      try {
+        try {
+          await runBackend(['download-update', info.asset.browser_download_url, info.tag, info.asset.name]);
+          info.downloaded = true;
+          info.downloadMode = 'host';
+          return true;
+        } catch (hostError) {
+          await cacheUpdateAssetInBrowser(info.asset);
+          info.downloaded = true;
+          info.downloadMode = 'browser';
+          info.downloadWarning = String(hostError && hostError.message ? hostError.message : hostError || '');
+          return true;
+        }
+      } catch (error) {
+        info.downloaded = false;
+        info.downloadError = String(error && error.message ? error.message : error || 'download failed');
+        return false;
+      } finally {
+        state.updateDownloadInFlight = false;
+        syncUpdatePill();
+      }
+    }
+
+    async function checkForUpdates(options) {
+      options = options || {};
+      if (state.updateCheckInFlight) {
+        return state.updateInfo;
+      }
+      state.updateCheckInFlight = true;
+      updateStatusCopy('Checking GitHub Releases...');
+      try {
+        var build = await loadBuildInfo();
+        var res = await fetch(UPDATE_API_URL, {
+          cache: 'no-store',
+          headers: { Accept: 'application/vnd.github+json' }
+        });
+        if (!res.ok) {
+          throw new Error('GitHub returned ' + res.status);
+        }
+        var release = await res.json();
+        var tag = String(release.tag_name || '').trim();
+        if (!tag) {
+          throw new Error('Latest release has no tag.');
+        }
+        var current = normalizeVersionTag(build.version || '');
+        var latest = normalizeVersionTag(tag);
+        if (current && current !== '0.0.0-dev' && latest === current) {
+          state.updateInfo = null;
+          syncUpdatePill();
+          updateStatusCopy('Priorities is up to date.');
+          return null;
+        }
+        var asset = pickUpdateAsset(release);
+        if (!asset) {
+          state.updateInfo = null;
+          syncUpdatePill();
+          updateStatusCopy('A release is available, but no artifact matches this platform.');
+          return null;
+        }
+        state.updateInfo = {
+          tag: tag,
+          releaseUrl: release.html_url || 'https://github.com/' + UPDATE_REPO + '/releases/latest',
+          asset: {
+            name: String(asset.name || ''),
+            browser_download_url: String(asset.browser_download_url || ''),
+            size: Number(asset.size || 0)
+          },
+          downloaded: false,
+          downloadMode: ''
+        };
+        updateStatusCopy('Downloading ' + state.updateInfo.tag + '...');
+        var downloaded = await predownloadUpdateAsset(state.updateInfo);
+        updateStatusCopy(downloaded ? ('Update ' + state.updateInfo.tag + ' is ready.') : ('Update found, but download failed: ' + (state.updateInfo.downloadError || 'unknown error')));
+        return state.updateInfo;
+      } catch (error) {
+        if (options.manual) {
+          status('Update check failed: ' + String(error && error.message ? error.message : error), true);
+        }
+        updateStatusCopy('Update check failed.');
+        return null;
+      } finally {
+        state.updateCheckInFlight = false;
+        syncUpdatePill();
+      }
+    }
+
+    async function installDownloadedUpdate() {
+      var info = state.updateInfo;
+      if (!info || !info.asset || !info.downloaded) {
+        status('No downloaded update is ready yet.', true);
+        return;
+      }
+      try {
+        updateStatusCopy('Installing ' + info.tag + '...');
+        await runBackend(['install-update', info.tag, info.asset.name]);
+        status('Installing update. Priorities will restart.', false);
+      } catch (error) {
+        var detail = String(error && error.message ? error.message : error || '');
+        if (info.releaseUrl) {
+          status('Auto-install is not available here. Open the release to install manually.', true, {
+            actionLabel: 'Open Release',
+            onAction: function () { window.open(info.releaseUrl, '_blank', 'noopener'); }
+          });
+        } else {
+          status('Auto-install failed: ' + detail, true);
+        }
+        updateStatusCopy(detail || 'Auto-install is not available on this platform.');
+      }
+    }
+
+    function initAutoUpdateSettings() {
+      state.autoUpdateEnabled = truthyPref(prefValue(AUTO_UPDATE_PREF, '0'));
+      var input = document.getElementById('auto-update-enabled');
+      var pill = document.getElementById('update-pill');
+      if (input) {
+        input.checked = state.autoUpdateEnabled;
+        input.addEventListener('change', function () {
+          state.autoUpdateEnabled = !!input.checked;
+          persistUiPref(AUTO_UPDATE_PREF, state.autoUpdateEnabled ? '1' : '0');
+          updateStatusCopy(state.autoUpdateEnabled ? 'Checking GitHub Releases...' : 'Automatic update checks are off.');
+          if (state.autoUpdateEnabled) {
+            checkForUpdates({ manual: true });
+          }
+        });
+      }
+      if (pill) {
+        pill.addEventListener('click', function () {
+          installDownloadedUpdate();
+        });
+      }
+      syncUpdatePill();
+      if (state.autoUpdateEnabled) {
+        setTimeout(function () {
+          checkForUpdates();
+        }, 1200);
+      } else {
+        updateStatusCopy('When enabled, Priorities checks GitHub Releases and pre-downloads the matching artifact.');
       }
     }
 
@@ -4734,6 +4986,7 @@
       await loadUiPrefs();
       loadSupportDevPrefs();
       loadNextActionLabelCacheFromPrefs();
+      initAutoUpdateSettings();
       state.activeTheme = String(loadStorage(THEME_KEY) || 'psionic').toLowerCase().trim();
       await loadThemes();
       applyTheme(state.activeTheme);

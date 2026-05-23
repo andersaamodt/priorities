@@ -5,6 +5,8 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
+  release:
+    types: [published]
   workflow_dispatch:
   workflow_call:
 
@@ -13,7 +15,7 @@ concurrency:
   cancel-in-progress: true
 
 permissions:
-  contents: read
+  contents: write
 
 env:
   WIZARDRY_APPS_REF: main
@@ -84,6 +86,19 @@ jobs:
           set -eu
           cc -O2 wizardry-apps/apps/.host/linux/main.c -o "$RUNNER_TEMP/wizardry-host" $(pkg-config --cflags --libs gtk+-3.0 webkit2gtk-4.1)
 
+      - name: Write build metadata
+        run: |
+          set -eu
+          mkdir -p priorities/assets
+          version="${GITHUB_REF_NAME}"
+          if [ "${GITHUB_EVENT_NAME}" != "release" ]; then
+            version="0.0.0-${GITHUB_RUN_NUMBER}"
+          fi
+          cat > priorities/assets/build-info.json <<JSON
+          {"version":"$version","commit":"$GITHUB_SHA","repository":"andersaamodt/priorities"}
+          JSON
+          sed -i 's/^          //' priorities/assets/build-info.json
+
       - name: Stage app assets
         run: |
           set -eu
@@ -127,6 +142,12 @@ jobs:
           name: priorities-linux
           path: dist/linux/*.AppImage
 
+      - name: Attach Linux artifact to release
+        if: github.event_name == 'release'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "${GITHUB_REF_NAME}" dist/linux/*.AppImage --clobber
+
   macos:
     name: Build macOS App
     needs: validate
@@ -151,6 +172,19 @@ jobs:
         run: |
           set -eu
           clang -O2 -fobjc-arc -fmodules wizardry-apps/apps/.host/macos/main.m -o "$RUNNER_TEMP/wizardry-host" -framework Cocoa -framework WebKit
+
+      - name: Write build metadata
+        run: |
+          set -eu
+          mkdir -p priorities/assets
+          version="${GITHUB_REF_NAME}"
+          if [ "${GITHUB_EVENT_NAME}" != "release" ]; then
+            version="0.0.0-${GITHUB_RUN_NUMBER}"
+          fi
+          cat > priorities/assets/build-info.json <<JSON
+          {"version":"$version","commit":"$GITHUB_SHA","repository":"andersaamodt/priorities"}
+          JSON
+          sed -i '' 's/^          //' priorities/assets/build-info.json
 
       - name: Stage app assets
         run: |
@@ -197,6 +231,12 @@ jobs:
           name: priorities-macos
           path: dist/macos/*.zip
 
+      - name: Attach macOS artifact to release
+        if: github.event_name == 'release'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "${GITHUB_REF_NAME}" dist/macos/*.zip --clobber
+
   android:
     name: Build Android APK
     needs: validate
@@ -228,6 +268,19 @@ jobs:
       - name: Install dependencies
         run: sudo apt-get update && sudo apt-get install -y jq
 
+      - name: Write build metadata
+        run: |
+          set -eu
+          mkdir -p priorities/assets
+          version="${GITHUB_REF_NAME}"
+          if [ "${GITHUB_EVENT_NAME}" != "release" ]; then
+            version="0.0.0-${GITHUB_RUN_NUMBER}"
+          fi
+          cat > priorities/assets/build-info.json <<JSON
+          {"version":"$version","commit":"$GITHUB_SHA","repository":"andersaamodt/priorities"}
+          JSON
+          sed -i 's/^          //' priorities/assets/build-info.json
+
       - name: Stage Android project
         run: |
           set -eu
@@ -255,6 +308,12 @@ jobs:
           name: priorities-android
           path: dist/android/*.apk
 
+      - name: Attach Android artifact to release
+        if: github.event_name == 'release'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "${GITHUB_REF_NAME}" dist/android/*.apk --clobber
+
   ios:
     name: Build iOS Simulator App
     needs: validate
@@ -275,6 +334,19 @@ jobs:
       - name: Install dependencies
         run: brew install jq xcodegen
 
+      - name: Write build metadata
+        run: |
+          set -eu
+          mkdir -p priorities/assets
+          version="${GITHUB_REF_NAME}"
+          if [ "${GITHUB_EVENT_NAME}" != "release" ]; then
+            version="0.0.0-${GITHUB_RUN_NUMBER}"
+          fi
+          cat > priorities/assets/build-info.json <<JSON
+          {"version":"$version","commit":"$GITHUB_SHA","repository":"andersaamodt/priorities"}
+          JSON
+          sed -i '' 's/^          //' priorities/assets/build-info.json
+
       - name: Build iOS simulator app
         run: |
           set -eu
@@ -286,3 +358,9 @@ jobs:
         with:
           name: priorities-ios
           path: dist/ios/*.zip
+
+      - name: Attach iOS artifact to release
+        if: github.event_name == 'release'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "${GITHUB_REF_NAME}" dist/ios/*.zip --clobber

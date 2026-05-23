@@ -1,12 +1,13 @@
 # Priorities
 
-Priorities is a small, folder-based app for keeping the next thing visible.
-Point it at a folder, add tasks, move the important ones upward, check off what
-is done, and drill into projects when a task grows into a list of its own.
+Priorities is a to-do app for people who think in folders. Pick a folder, add
+the things you need to do, and keep moving the important ones upward until the
+next thing is obvious. When a task turns into a project, open it as a folder and
+keep going one level down.
 
-It is built to work with ordinary files instead of a hosted account. Your
-priorities can live in any folder you control, including a folder synced across
-devices.
+There is no account to create and no hosted service holding your list.
+Priorities writes ordinary files in a folder you choose, so your data stays
+where you put it and can sync with the tools you already use.
 
 ## What It Does
 

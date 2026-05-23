@@ -20,6 +20,8 @@ done
 grep -q 'stage-web-assets.sh priorities' "$workflow"
 grep -q 'prepare-android-host.sh priorities-mobile' "$workflow"
 grep -q 'build-ios-app.sh priorities-mobile' "$workflow"
+grep -q 'priorities/assets/forge-icon.png "$appdir/$app.png"' "$workflow"
+grep -q 'Desktop Entry' "$workflow"
 grep -q 'assets/build-info.json' "$workflow"
 grep -Fq 'gh release upload "${GITHUB_REF_NAME}" dist/linux/*.AppImage --clobber' "$workflow"
 grep -Fq 'gh release upload "${GITHUB_REF_NAME}" dist/macos/*.zip --clobber' "$workflow"

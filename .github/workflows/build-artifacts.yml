@@ -120,6 +120,16 @@ jobs:
           cp -R "$RUNNER_TEMP/priorities-linux-stage"/app/. "$appdir/usr/share/$app/"
           cp -R "$RUNNER_TEMP/priorities-linux-stage"/core/. "$appdir/usr/share/wizardry-apps/core/"
           cp "$RUNNER_TEMP/wizardry-host" "$appdir/usr/bin/"
+          cp priorities/assets/forge-icon.png "$appdir/$app.png"
+          cat > "$appdir/$app.desktop" <<DESKTOP
+          [Desktop Entry]
+          Type=Application
+          Name=Priorities
+          Exec=wizardry-host
+          Icon=$app
+          Categories=Utility;
+          DESKTOP
+          sed -i 's/^          //' "$appdir/$app.desktop"
           cat > "$appdir/AppRun" <<'APP'
           #!/bin/sh
           set -eu

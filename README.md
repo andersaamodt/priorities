@@ -81,6 +81,7 @@ Useful local checks:
 sh -n scripts/priorities-backend.sh
 .tests/test-support-development.sh
 .tests/test-build-artifacts-workflow.sh
+.tests/test-ui-interaction-contracts.sh
 ```
 
 The CI workflow is in `.github/workflows/build-artifacts.yml`. It checks out the

@@ -5046,11 +5046,6 @@
       panel.classList.toggle('hidden', !open);
       button.setAttribute('aria-expanded', open ? 'true' : 'false');
       button.classList.toggle('active', open);
-      panel.style.transition = 'none';
-      panel.style.opacity = open ? '1' : '0';
-      panel.style.visibility = open ? 'visible' : 'hidden';
-      panel.style.pointerEvents = open ? 'auto' : 'none';
-      panel.style.transform = open ? 'translateY(0) scale(1)' : 'translateY(calc(6px * var(--ui-scale))) scale(0.985)';
       if (!open) {
         closeThemePickerMenu();
       }

@@ -46,5 +46,17 @@ require_style '\.project-children-enter' 'project expansion animation class'
 require_style '@keyframes project-children-enter' 'project expansion keyframes'
 require_style '@keyframes project-children-exit' 'project collapse keyframes'
 require_style 'prefers-reduced-motion: reduce' 'reduced-motion guard for project animations'
+require_style 'opacity 180ms ease' 'settings panel open transition'
+require_style '\.settings-panel\.popover\.hidden' 'WebKit-specific settings hidden state'
+
+if grep -q 'letter-spacing: calc(-' "$STYLE"; then
+  printf '%s\n' "test-ui-interaction-contracts: negative letter spacing is not allowed" >&2
+  exit 1
+fi
+
+if grep -A4 '^\\.settings-row label' "$STYLE" | grep -q 'text-transform: uppercase'; then
+  printf '%s\n' "test-ui-interaction-contracts: settings labels should not be uppercase" >&2
+  exit 1
+fi
 
 printf '%s\n' "test-ui-interaction-contracts: ok"

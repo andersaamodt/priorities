@@ -381,7 +381,7 @@ h1 {
   opacity: 1;
   transform: translateY(0) scale(1);
   visibility: visible;
-  transition: none;
+  transition: opacity 180ms ease, transform 180ms ease, visibility 0s linear 0s;
 }
 
 .settings-panel.popover:not(.hidden) {
@@ -395,7 +395,12 @@ h1 {
   transform: translateY(calc(6px * var(--ui-scale))) scale(0.985);
   visibility: hidden;
   pointer-events: none;
-  transition: none;
+  transition: opacity 160ms ease, transform 160ms ease, visibility 0s linear 160ms;
+}
+
+.settings-panel.popover.hidden {
+  visibility: hidden;
+  pointer-events: none;
 }
 
 .settings-row {
@@ -410,8 +415,8 @@ h1 {
 
 .settings-row label {
   font-size: calc(12px * var(--ui-scale));
-  letter-spacing: 0.05em;
-  text-transform: uppercase;
+  letter-spacing: 0;
+  text-transform: none;
   color: var(--light-text, #5d6486);
 }
 
@@ -1480,7 +1485,7 @@ button:hover {
     drop-shadow(0 0 4px color-mix(in srgb, var(--accent, #7782d6) 34%, transparent));
   font-size: calc(22px * var(--ui-scale));
   line-height: 1;
-  letter-spacing: calc(-1px * var(--ui-scale));
+  letter-spacing: 0;
   cursor: default;
   width: calc(34px * var(--ui-scale));
   height: calc(34px * var(--ui-scale));

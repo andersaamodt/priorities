@@ -38,6 +38,7 @@ require_index 'state.pendingTrashUndo' 'pending trash state exists'
 require_index 'nextItems = nextItems.filter' 'pending trash items stay filtered during list refresh'
 require_index 'cloneDirItems(cachedParentItems)' 'delete undo snapshots clone cached items'
 require_index 'function collapseExpanded(path)' 'collapse has an animation-aware path'
+require_index 'function clearProjectChildrenEnter(path)' 'project expansion classes are cleaned after animation'
 require_index 'project-children-enter' 'expanded project rows mark enter animation'
 require_index 'data-parent-path' 'project child groups are identifiable for collapse'
 

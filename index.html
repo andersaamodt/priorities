@@ -2219,6 +2219,16 @@
       return null;
     }
 
+    function clearProjectChildrenEnter(path) {
+      var group = findProjectChildrenGroup(path);
+      if (group) {
+        group.classList.remove('project-children-enter');
+      }
+      if (state.expandingPath === path) {
+        state.expandingPath = '';
+      }
+    }
+
     function readCachedCheckedValue(path) {
       if (!path) {
         return 0;
@@ -3676,9 +3686,7 @@
       state.expandingPath = path;
       render({ suppressLoadingOverlay: true });
       setTimeout(function () {
-        if (state.expandingPath === path) {
-          state.expandingPath = '';
-        }
+        clearProjectChildrenEnter(path);
       }, 280);
       revalidateDirInBackground(path);
     }
@@ -4270,9 +4278,7 @@
         state.pendingExpandPath = '';
         await render({ suppressLoadingOverlay: true });
         setTimeout(function () {
-          if (state.expandingPath === path) {
-            state.expandingPath = '';
-          }
+          clearProjectChildrenEnter(path);
         }, 280);
       }
     }

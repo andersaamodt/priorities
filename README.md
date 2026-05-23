@@ -12,16 +12,16 @@ them with normal tools.
 
 ## What It Does
 
-- Stores tasks as plain text files.
-- Keeps a prioritized list visible without asking you to rank everything from
+- Store tasks as plain text files.
+- Keep a prioritized list visible without ranking everything from
   scratch.
-- Promotes only the tasks that need to move.
-- Checks tasks off when they are complete.
-- Renames or deletes tasks without leaving the app.
-- Turns a task into a project folder when it needs sub-tasks.
-- Lets you drill into folders and back out again.
-- Copies the visible list as a Markdown checklist.
-- Offers themes, font choices, and text scale controls.
+- Promote only the tasks that need to move.
+- Check tasks off when they are complete.
+- Rename or delete tasks without leaving the app.
+- Turn a task into a project folder when it needs sub-tasks.
+- Drill into folders and back out again.
+- Copy the visible list as a Markdown checklist.
+- Choose themes, fonts, and text scale.
 
 ## Command Line
 

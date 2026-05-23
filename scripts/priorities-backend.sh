@@ -150,6 +150,29 @@ safe_update_component() {
   printf '%s' "$value" | tr -c 'A-Za-z0-9._+-' '_'
 }
 
+validate_child_name() {
+  label=$1
+  value=${2-}
+  if [ -z "$value" ]; then
+    printf '%s\n' "priorities-backend: $label is required" >&2
+    exit 2
+  fi
+  case "$value" in
+    */*|*\\*)
+      printf '%s\n' "priorities-backend: $label must not include path separators" >&2
+      exit 2
+      ;;
+    .|..)
+      printf '%s\n' "priorities-backend: invalid $label" >&2
+      exit 2
+      ;;
+  esac
+  if printf '%s' "$value" | LC_ALL=C grep '[[:cntrl:]]' >/dev/null 2>&1; then
+    printf '%s\n' "priorities-backend: $label must be a single filename" >&2
+    exit 2
+  fi
+}
+
 validate_update_url() {
   url=${1-}
   case "$url" in
@@ -2130,16 +2153,7 @@ case "$action" in
       exit 2
     fi
     target=$(expand_home_path "$target")
-    case "$new_name" in
-      */*|*\\*)
-        printf '%s\n' "priorities-backend: rename name must not include path separators" >&2
-        exit 2
-        ;;
-      .|..)
-        printf '%s\n' "priorities-backend: invalid rename target name" >&2
-        exit 2
-        ;;
-    esac
+    validate_child_name "rename name" "$new_name"
     old_name=$(basename "$target")
     parent_dir=$(dirname "$target")
     renamed_path=$parent_dir/$new_name
@@ -2165,16 +2179,7 @@ case "$action" in
       exit 2
     fi
     target=$(expand_home_path "$target")
-    case "$new_name" in
-      */*|*\\*)
-        printf '%s\n' "priorities-backend: rename name must not include path separators" >&2
-        exit 2
-        ;;
-      .|..)
-        printf '%s\n' "priorities-backend: invalid rename target name" >&2
-        exit 2
-        ;;
-    esac
+    validate_child_name "rename name" "$new_name"
     old_name=$(basename "$target")
     parent_dir=$(dirname "$target")
     renamed_path=$parent_dir/$new_name
@@ -2200,6 +2205,7 @@ case "$action" in
       exit 2
     fi
     dir=$(expand_home_path "$dir")
+    validate_child_name "priority name" "$name"
     target=$dir/$name
     prioritize_impl "$target" 1
     ;;
@@ -2212,6 +2218,7 @@ case "$action" in
       exit 2
     fi
     dir=$(expand_home_path "$dir")
+    validate_child_name "priority name" "$name"
     target=$dir/$name
     prioritize_emit_impl "$target" 1
     ;;

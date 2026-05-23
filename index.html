@@ -309,7 +309,6 @@
       windowSizingReady: false,
       autoWindowGrowEnabled: false,
       uiPrefs: {},
-      rootPrefSaveTimer: null,
       snapshotPrefSaveTimer: null,
       nextActionCacheSaveTimer: null,
       startupSnapshotRestored: false,
@@ -2330,6 +2329,20 @@
         return '/' + child;
       }
       return base + '/' + child;
+    }
+
+    function priorityNameError(name) {
+      var value = String(name || '').trim();
+      if (!value) {
+        return 'Priority name is empty.';
+      }
+      if (value === '.' || value === '..') {
+        return 'Priority name must be a regular filename.';
+      }
+      if (/[\\/\r\n\t]/.test(value)) {
+        return 'Priority name must not include path separators or line breaks.';
+      }
+      return '';
     }
 
     function applyOptimisticAdd(dir, name) {
@@ -4758,7 +4771,9 @@
 
     function addAtRoot(rawValue) {
       var name = String(rawValue || '').trim();
-      if (!name) {
+      var nameError = priorityNameError(name);
+      if (nameError) {
+        status(nameError, true);
         return;
       }
       var targetDir = String(state.root || '.').trim() || '.';
@@ -4874,38 +4889,43 @@
     function setRootAndRefresh(options) {
       options = options || {};
       clearDomTextSelection();
-      state.root = rootInputValue();
+      var nextRoot = rootInputValue();
+      var preloadedRootItems = null;
       syncRootDirtyState();
-      state.expanded = Object.create(null);
-      state.expanded[state.root] = true;
-      state.cache = Object.create(null);
-      state.cacheAliases = Object.create(null);
-      state.revealedMakeProjectPath = '';
-      state.pendingMakeProjectPath = '';
-      state.openMenuPath = '';
-      state.editingPath = '';
-      state.pendingRenamePath = '';
-      if (options.persistRoot !== false) {
-        saveStorage(ROOT_KEY, state.root);
-        state.rootCeiling = normalizeRootPath(state.root);
-      }
-      updateTitleFromRoot();
-      if (!options.keepDrillStack) {
-        state.drillStack = [];
-      }
-      updateDrillUpVisibility();
       var preloadStartupData = async function () {
-        if (!options.preloadStartupData) {
+        if (!options.preloadStartupData && !options.validateRoot) {
           return null;
         }
-        var rootItems = await listDir(state.root);
-        setCachedDirItems(state.root, rootItems);
+        var rootItems = await listDir(nextRoot);
+        preloadedRootItems = rootItems;
         return rootItems;
       };
       return preloadStartupData().then(function (rootItems) {
+        state.root = nextRoot;
+        state.expanded = Object.create(null);
+        state.expanded[state.root] = true;
+        state.cache = Object.create(null);
+        state.cacheAliases = Object.create(null);
+        if (preloadedRootItems) {
+          setCachedDirItems(state.root, preloadedRootItems);
+        }
+        state.revealedMakeProjectPath = '';
+        state.pendingMakeProjectPath = '';
+        state.openMenuPath = '';
+        state.editingPath = '';
+        state.pendingRenamePath = '';
+        if (options.persistRoot !== false) {
+          saveStorage(ROOT_KEY, state.root);
+          state.rootCeiling = normalizeRootPath(state.root);
+        }
+        updateTitleFromRoot();
+        if (!options.keepDrillStack) {
+          state.drillStack = [];
+        }
+        updateDrillUpVisibility();
         return render({ suppressLoadingOverlay: !!options.suppressLoadingOverlay }).then(function () {
           if (!options.preloadStartupData || !Array.isArray(rootItems) || !rootItems.length) {
-            return;
+            return true;
           }
           // Warm next-action caches after first paint to keep startup snappy.
           setTimeout(function () {
@@ -4938,26 +4958,17 @@
               worker();
             }
           }, 0);
+          return true;
         });
+      }).catch(function (error) {
+        status(String(error && error.message ? error.message : error), true);
+        syncRootDirtyState();
+        updateDrillUpVisibility();
+        return false;
       });
     }
 
-    function schedulePersistRootPref(value) {
-      if (state.rootPrefSaveTimer) {
-        clearTimeout(state.rootPrefSaveTimer);
-      }
-      state.rootPrefSaveTimer = setTimeout(function () {
-        state.rootPrefSaveTimer = null;
-        saveStorage(ROOT_KEY, value);
-      }, 220);
-    }
-
     function persistRootInputOnly() {
-      var value = rootInputValue();
-      schedulePersistRootPref(value);
-      state.rootCeiling = normalizeRootPath(value);
-      updateTitleFromRoot();
-      updateDrillUpVisibility();
       syncRootDirtyState();
     }
 
@@ -5157,10 +5168,6 @@
           clearTimeout(state.windowAutoGrowTimer);
           state.windowAutoGrowTimer = null;
         }
-        if (state.rootPrefSaveTimer) {
-          clearTimeout(state.rootPrefSaveTimer);
-          state.rootPrefSaveTimer = null;
-        }
         if (state.snapshotPrefSaveTimer) {
           clearTimeout(state.snapshotPrefSaveTimer);
           state.snapshotPrefSaveTimer = null;
@@ -5183,7 +5190,9 @@
         }
       });
       window.addEventListener('resize', scheduleHostPrioritiesDragHoleSync, { passive: true });
-      document.getElementById('refresh').addEventListener('click', setRootAndRefresh);
+      document.getElementById('refresh').addEventListener('click', function () {
+        setRootAndRefresh({ validateRoot: true });
+      });
       document.getElementById('drill-up').addEventListener('click', drillUp);
       var rootDirInput = document.getElementById('root-dir');
       var startupPathInput = document.getElementById('startup-path');
@@ -5196,13 +5205,13 @@
           return;
         }
         if (event.key === 'Enter') {
-          setRootAndRefresh();
+          setRootAndRefresh({ validateRoot: true });
         }
       });
       document.getElementById('browse').addEventListener('click', function () {
         browseForFolder(function (path) {
           document.getElementById('root-dir').value = path;
-          setRootAndRefresh();
+          setRootAndRefresh({ validateRoot: true });
         });
       });
 
@@ -5217,8 +5226,11 @@
           return;
         }
         document.getElementById('root-dir').value = path;
-        document.getElementById('startup-modal').classList.add('hidden');
-        setRootAndRefresh();
+        setRootAndRefresh({ validateRoot: true }).then(function (ok) {
+          if (ok) {
+            document.getElementById('startup-modal').classList.add('hidden');
+          }
+        });
       });
       startupPathInput.addEventListener('keydown', function (event) {
         if ((event.metaKey || event.ctrlKey) && String(event.key || '').toLowerCase() === 'a') {

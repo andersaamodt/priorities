@@ -41,6 +41,10 @@ require_index 'function collapseExpanded(path)' 'collapse has an animation-aware
 require_index 'function clearProjectChildrenEnter(path)' 'project expansion classes are cleaned after animation'
 require_index 'project-children-enter' 'expanded project rows mark enter animation'
 require_index 'data-parent-path' 'project child groups are identifiable for collapse'
+require_index 'validateRoot: true' 'folder changes are validated before apply'
+require_index 'startup-modal.*classList.add' 'startup modal closes only after a successful root load'
+require_index 'function priorityNameError(name)' 'add flow validates filename shape before optimistic UI'
+require_index 'Priority name must not include path separators' 'add flow explains invalid filename shape'
 
 require_style '\.project-children-enter' 'project expansion animation class'
 require_style '@keyframes project-children-enter' 'project expansion keyframes'

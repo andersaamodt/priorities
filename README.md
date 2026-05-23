@@ -1,25 +1,34 @@
 # Priorities
 
-Priorities is a to-do app for people who think in folders. Pick a folder, add
-the things you need to do, and keep moving the important ones upward until the
-next thing is obvious. When a task turns into a project, open it as a folder and
-keep going one level down.
+Priorities is a to-do app built around one question: what should move up? Add
+the things you need to do, promote only the items whose position is wrong, and
+stop as soon as the next thing is obvious. The point is to get a messy list into
+usable order with the fewest prioritization actions the list actually requires.
 
-There is no account to create and no hosted service holding your list.
-Priorities writes ordinary files in a folder you choose, so your data stays
-where you put it and can sync with the tools you already use.
+Your list is not trapped in an account, a database, or a proprietary sync
+service. Priorities stores tasks as ordinary plain text files in a folder you
+choose, so you can inspect them, back them up, edit them, sync them, or script
+them with normal tools.
 
 ## What It Does
 
-- Shows a prioritized task list from a folder.
-- Adds new tasks as files.
-- Promotes tasks when they become more important.
+- Stores tasks as plain text files.
+- Keeps a prioritized list visible without asking you to rank everything from
+  scratch.
+- Promotes only the tasks that need to move.
 - Checks tasks off when they are complete.
 - Renames or deletes tasks without leaving the app.
 - Turns a task into a project folder when it needs sub-tasks.
 - Lets you drill into folders and back out again.
 - Copies the visible list as a Markdown checklist.
 - Offers themes, font choices, and text scale controls.
+
+## Command Line
+
+Because priorities are plain files, the app is not the only way in. You can add
+priorities quickly from a terminal, script new priorities from another workflow,
+or use Wizardry's interactive menus to manage the same lists without opening the
+native app.
 
 ## Sync
 
@@ -61,9 +70,9 @@ the artifact for your platform.
 
 ## Developer Notes
 
-Priorities is a Wizardry app built on the Forge native app pipeline. The app UI
-lives in `index.html` and `style.css`; themes live in `themes/`; the local file
-backend is `scripts/priorities-backend.sh`.
+Priorities is built on the Forge native app pipeline. The app UI lives in
+`index.html` and `style.css`; themes live in `themes/`; the local file backend
+is `scripts/priorities-backend.sh`.
 
 Useful local checks:
 
@@ -73,9 +82,9 @@ sh -n scripts/priorities-backend.sh
 .tests/test-build-artifacts-workflow.sh
 ```
 
-The CI workflow is in `.github/workflows/build-artifacts.yml`. It checks out
-`andersaamodt/wizardry-apps`, validates the app contract, and uses the Forge
-pipeline to build native artifacts.
+The CI workflow is in `.github/workflows/build-artifacts.yml`. It checks out the
+Forge pipeline repository, validates the app contract, and builds native
+artifacts.
 
 This project is licensed under GNU AGPL-3.0-or-later.
 Additional terms apply; see WIZARDRY_ADDENDUM.md.

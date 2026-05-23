@@ -144,6 +144,10 @@
               <input type="checkbox" data-support-dev-action="reprioritizeTask">
               <span>When I reprioritize a task</span>
             </label>
+            <label class="support-dev-check">
+              <input type="checkbox" data-support-dev-action="deleteIncompleteTask">
+              <span>When I delete an incomplete task</span>
+            </label>
           </div>
           <label class="support-dev-field">
             <span>Usage amount</span>
@@ -215,7 +219,8 @@
     var SUPPORT_DEV_ACTIONS = [
       { key: 'createTask', label: 'When I create a task' },
       { key: 'completeTask', label: 'When I complete a task' },
-      { key: 'reprioritizeTask', label: 'When I reprioritize a task' }
+      { key: 'reprioritizeTask', label: 'When I reprioritize a task' },
+      { key: 'deleteIncompleteTask', label: 'When I delete an incomplete task' }
     ];
     var DEFAULT_SUPPORT_DEV = {
       target: 'zap@andersaamodt.com',
@@ -230,7 +235,8 @@
       actions: {
         createTask: false,
         completeTask: false,
-        reprioritizeTask: false
+        reprioritizeTask: false,
+        deleteIncompleteTask: false
       },
       totalSentSats: 0,
       totalZapCount: 0,
@@ -4221,6 +4227,9 @@
           ['remove-fast', pending.path],
           ['remove', pending.path]
         );
+        if (pending.wasIncomplete) {
+          triggerSupportDevZap('deleteIncompleteTask', 'delete an incomplete task');
+        }
       } catch (error) {
         if (pending.removedOptimistically && pending.previousItems) {
           setCachedDirItems(pending.parentDir, pending.previousItems);
@@ -4281,6 +4290,7 @@
         var parentDir = parentDirOfPath(path);
         var cachedParentItems = getCachedDirItems(parentDir);
         var previousItems = Array.isArray(cachedParentItems) ? cachedParentItems.slice() : null;
+        var wasIncomplete = readCachedCheckedValue(path) !== 1;
         var removedOptimistically = removeCachedItemByPath(parentDir, path);
         if (removedOptimistically) {
           render({ suppressLoadingOverlay: true, preserveInputSelection: true });
@@ -4293,6 +4303,7 @@
           parentDir: parentDir,
           previousItems: previousItems,
           removedOptimistically: removedOptimistically,
+          wasIncomplete: wasIncomplete,
           timer: null,
           committing: false
         };

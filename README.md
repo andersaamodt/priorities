@@ -34,8 +34,8 @@ native app.
 
 Priorities does not require a cloud service. For phone, tablet, and desktop
 sync, point Priorities at a folder synced by
-[Syncthing](https://syncthing.net/). Syncthing keeps the folder moving between
-your devices, while Priorities reads and writes the files in that folder.
+[Syncthing](https://syncthing.net/). Syncthing syncs the files between your
+devices; Priorities reads and writes the files in that folder.
 
 The app is designed to be friendly to synced folders. On platforms where regular
 file metadata is not a good fit, Priorities can store its task metadata in small

@@ -361,7 +361,10 @@ jobs:
         run: |
           set -eu
           mkdir -p dist/ios
-          WIZARDRY_APPS_ROOT="$PWD/wizardry-apps" sh wizardry-apps/tools/release/build-ios-app.sh priorities-mobile dist/ios smoke
+          WIZARDRY_APPS_ROOT="$PWD/wizardry-apps" sh wizardry-apps/tools/release/build-ios-app.sh priorities-mobile dist/ios smoke || {
+            cat /tmp/wizardry-ios-smoke-priorities-mobile.log 2>/dev/null || true
+            exit 1
+          }
 
       - name: Upload iOS artifact
         uses: actions/upload-artifact@v4

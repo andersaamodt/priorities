@@ -39,7 +39,8 @@ devices; Priorities reads and writes the files in that folder.
 
 The app is designed to be friendly to synced folders. On platforms where regular
 file metadata is not a good fit, Priorities can store its task metadata in small
-sidecar files next to your tasks.
+sidecar files next to your tasks. If both synced machines use the same OS,
+Syncthing can also sync Unix extended attributes (`xattrs`).
 
 ## Support Development
 
